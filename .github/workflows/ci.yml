@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  leak-check:
+    name: Leak guard (no private strings)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Grep tracked files against the private blocklist
+        env:
+          # One extended regex per line. Lives in repo settings, NOT in the
+          # tree — the blocklist names exactly what must never appear here.
+          # Absent on forks/PRs without secrets: the job skips (fail-open for
+          # outsiders; the owner's pushes are the vector that matters).
+          BLOCKLIST: ${{ secrets.LEAK_BLOCKLIST }}
+        run: |
+          if [ -z "$BLOCKLIST" ]; then
+            echo "::notice::LEAK_BLOCKLIST secret not set - leak guard skipped. Set it under Settings > Secrets and variables > Actions."
+            exit 0
+          fi
+          printf '%s\n' "$BLOCKLIST" > "$RUNNER_TEMP/blocklist.txt"
+          bash scripts/leak-check.sh "$RUNNER_TEMP/blocklist.txt"
+
+  shellcheck:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint shell scripts
+        run: shellcheck install.sh scripts/leak-check.sh
+
+  psscriptanalyzer:
+    name: PSScriptAnalyzer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint install.ps1 (errors fail; warnings reported)
+        shell: pwsh
+        run: |
+          Install-Module PSScriptAnalyzer -Force -Scope CurrentUser
+          $results = Invoke-ScriptAnalyzer -Path ./install.ps1 -Severity Error, Warning
+          if ($results) { $results | Format-Table -AutoSize | Out-String | Write-Host }
+          if ($results | Where-Object Severity -eq 'Error') { exit 1 }
