@@ -12,7 +12,7 @@ Copy what's useful.
 | File | What it is |
 |---|---|
 | [`CLAUDE.md`](./CLAUDE.md) | Global working preferences Claude Code loads on every session — the workflow below. |
-| [`skills/`](./skills/) | On-demand [skills](https://docs.claude.com/en/docs/claude-code/skills). Ships with one documented template — [`skills/example-skill`](./skills/example-skill/SKILL.md) — showing the format. |
+| [`skills/`](./skills/) | On-demand [skills](https://docs.claude.com/en/docs/claude-code/skills). Ships a documented template ([`example-skill`](./skills/example-skill/SKILL.md)) plus a real [`test`](./skills/test/SKILL.md) skill that enforces the "test everything" pass. |
 | [`install.sh`](./install.sh) / [`install.ps1`](./install.ps1) | Symlink the above into `~/.claude`. Idempotent; backs up anything it would overwrite. |
 
 ## The workflow, in one screen
