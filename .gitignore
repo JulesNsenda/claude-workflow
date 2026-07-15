@@ -1,0 +1,21 @@
+# This repo is intentionally small and curated. Everything tracked here is
+# meant to be symlinked into ~/.claude by the install script.
+#
+# Nothing from ~/.claude runtime state should ever live here — no credentials,
+# no conversation transcripts, no caches. If you copy files in by hand, keep it
+# to config/skills only.
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/
+
+# Never track local backups the installer creates
+*.backup.*
+
+# Private/machine-local overrides live OUTSIDE git (e.g. ~/.claude/CLAUDE.local.md).
+# Never track a *.local.md that lands in the repo.
+*.local.md
