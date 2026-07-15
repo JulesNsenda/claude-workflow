@@ -41,6 +41,60 @@ matched to the risk.
 - **Three gears — skip / light / full** — so rigor scales with risk instead of
   being bypassed.
 
+### As a diagram
+
+Tinted nodes mark the steps where the workflow pins a model tier — **violet =
+frontier**, **blue = mid**, **green = fast**; untinted steps inherit from
+context.
+
+```mermaid
+flowchart TD
+    Task([Task arrives]) --> Gear{"Pick a gear —<br/>risk × blast radius"}
+    Gear -->|"trivial / obvious"| Skip["Skip — just do it"]
+    Gear -->|"bounded,<br/>self-contained"| Light["Light — inline plan, one reviewer,<br/>verify + test + runtime check"]
+    Gear -->|"feature / refactor /<br/>security-sensitive"| Orient
+
+    subgraph P1["Phase 1 — Plan"]
+        Orient["Orient — recall memories,<br/>map the subsystem"]:::fast --> Draft["Draft the plan"]:::frontier
+        Draft --> Panel["Adversarial panel — at least 3 agents<br/>reading the real repo"]
+        Panel --> Sec["Security<br/>(mandatory)"]
+        Panel --> Arch["Architecture<br/>(mandatory)"]
+        Panel --> Fit["Task-fit angles<br/>(correctness, simplicity, …)"]
+        Sec --> Reconcile["Reconcile critiques →<br/>docs/plans/YYYY-MM-DD-slug.md"]:::frontier
+        Arch --> Reconcile
+        Fit --> Reconcile
+    end
+
+    Reconcile --> Approve{"User approval<br/>(hard stop)"}
+    Approve -->|"changes"| Draft
+    Approve -->|"approved"| Impl
+
+    subgraph P2["Phase 2 — Implement → Gate → Commit"]
+        Impl["Implement — agents fanned out,<br/>one per cohesive unit"]:::mid --> G1
+        G1["Gate 1 · conformance —<br/>diff vs plan, item by item"]:::frontier --> G2
+        G2["Gate 2 · adversarial diff review —<br/>security + architecture + correctness"] --> G3
+        G3["Gate 3 · dedicated test pass —<br/>suite green, change fully covered"]:::mid --> G4
+        G4["Gate 4 · runtime verify —<br/>drive the real flow end-to-end"]
+        Fix["Fix loop —<br/>re-plan, re-implement"]:::frontier
+        G1 -. "fail" .-> Fix
+        G2 -. "fail" .-> Fix
+        G3 -. "fail" .-> Fix
+        G4 -. "fail" .-> Fix
+        Fix --> Impl
+        G4 -->|"all green"| Commit["Commit this plan-item"]
+        Commit -->|"more items"| Impl
+    end
+
+    Commit -->|"plan complete"| Capture["Capture learnings → memory"]
+    Skip --> Done([Done])
+    Light --> Done
+    Capture --> Done
+
+    classDef frontier fill:#e6e0f8,stroke:#7c6bd6,color:#2a2340
+    classDef mid fill:#dbe9f9,stroke:#4a90d9,color:#1c3350
+    classDef fast fill:#def0e5,stroke:#4caf7d,color:#1d3a2a
+```
+
 The authoritative version — including the model-tier table and the exact gates —
 lives in [`CLAUDE.md`](./CLAUDE.md); this summary is deliberately loose so the
 two drift as little as possible.
