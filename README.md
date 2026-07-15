@@ -88,6 +88,14 @@ Copy [`skills/example-skill`](./skills/example-skill/SKILL.md) — it documents 
 `SKILL.md` format (kebab-case `name`, a `description` packed with trigger words,
 then the procedure body) and how Claude decides when to load a skill.
 
+## Local, private overrides
+
+The bottom of [`CLAUDE.md`](./CLAUDE.md) imports `~/.claude/CLAUDE.local.md` if it
+exists (and silently does nothing if it doesn't — verified against Claude Code's
+memory loader). Put anything you don't want public — employer conventions,
+internal tool/agent names, machine-specific paths — in that file. It lives in
+`~/.claude`, never in this repo, so it's impossible to commit by accident.
+
 ## License
 
 [MIT](./LICENSE) — take it, fork it, adapt it.

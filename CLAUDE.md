@@ -52,3 +52,9 @@ Skip the plan-then-implement ritual for:
 - Tasks the user has already given a specific approach for.
 
 When in doubt about whether a task is "non-trivial", err on the side of planning — the user can always say "just do it" to skip.
+
+## Local, private overrides (optional)
+
+Machine- or client-specific preferences that shouldn't live in a public repo go in `~/.claude/CLAUDE.local.md`. The line below imports that file into global memory **if it exists**, and is a silent no-op if it doesn't — so cloning this repo needs nothing extra. Keep anything private (employer conventions, internal tool/agent names, per-machine paths) there, not here.
+
+@~/.claude/CLAUDE.local.md
