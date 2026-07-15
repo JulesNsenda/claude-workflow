@@ -1,5 +1,7 @@
 # claude-workflow
 
+[![CI](https://github.com/JulesNsenda/claude-workflow/actions/workflows/ci.yml/badge.svg)](https://github.com/JulesNsenda/claude-workflow/actions/workflows/ci.yml)
+
 My global [Claude Code](https://claude.com/claude-code) configuration — a small,
 curated set of working preferences and skills that I symlink into `~/.claude`.
 
@@ -17,30 +19,31 @@ Copy what's useful.
 
 ## The workflow, in one screen
 
-**Plan → Implement → Verify → Fix**, with the model tier matched to each phase.
+**Orient → Plan → Implement → Review the diff → Test → Verify at runtime →
+Commit per item**, with the model tier matched to each phase and the rigor
+matched to the risk.
 
-1. **Plan on the strongest model (Opus/Fable).** Draft a plan, then spawn **≥3
-   adversarial reviewer agents in parallel**, each with a *distinct* critique
-   angle (correctness/edge-cases, over-engineering, integration blast-radius) and
-   told to find flaws, not rubber-stamp. Reconcile their critiques into a plan
-   file at `docs/plans/YYYY-MM-DD-<slug>.md`, then **stop for approval** before
-   writing production code.
-2. **Implement on Sonnet, fanned out.** One agent per file / cohesive unit, in
-   parallel. Implement strictly to the plan — deviations get surfaced, not
-   silently accepted.
-3. **Verify on Opus.** Walk the diff against the plan item-by-item; report
-   pass/fail per item.
-4. **Fix loop.** Any issue → re-plan (Opus) → re-implement (Sonnet) → re-verify,
-   until clean.
+- **Orient first.** Recall project memory and map the affected subsystem with
+  cheap fast-tier agents before planning — a wrong mental model poisons
+  everything downstream.
+- **Adversarial planning.** Draft on the strongest model, then ≥3 parallel
+  critics who read the *actual repo*, not just the plan text. **Security and
+  architecture are mandatory angles on every plan**; further angles fit the
+  task. Reconcile the critiques into a plan file, then **stop for approval**
+  before any production code.
+- **Implement on mid-tier agents, fanned out** — one per cohesive unit, strictly
+  to the plan; deviations get surfaced, not improvised.
+- **Gate hard after coding:** plan-conformance check, security + architecture
+  review of the *diff* (bugs live in code, not plans), a dedicated test pass
+  that must cover every change, and an end-to-end runtime check. Nothing is
+  done until it's green, covered, and observed working.
+- **Commit per plan-item**, and capture durable lessons to memory at the end.
+- **Three gears — skip / light / full** — so rigor scales with risk instead of
+  being bypassed.
 
-**Model routing (every task):** reading/searching → Haiku · planning/verifying/
-orchestrating → Opus · implementing → Sonnet. The orchestrating session stays on
-Opus and spawns cheaper agents for the cheap phases.
-
-**When to skip the ritual:** one-line fixes, obvious single-file edits, pure
-questions, or when you've already been given a specific approach.
-
-The full, authoritative version lives in [`CLAUDE.md`](./CLAUDE.md).
+The authoritative version — including the model-tier table and the exact gates —
+lives in [`CLAUDE.md`](./CLAUDE.md); this summary is deliberately loose so the
+two drift as little as possible.
 
 ## Install
 
@@ -77,10 +80,26 @@ It is **safe to re-run**. Any existing *real* file at a target is moved to
 `<target>.backup.<timestamp>` before the symlink is created; existing symlinks are
 replaced in place.
 
-> **Windows symlink note:** file symlinks need Developer Mode (*Settings → Privacy
-> & security → For developers*) or an elevated shell. Skill *directories* fall back
-> to a Junction, which needs neither — so skills always link cleanly, and only
-> `CLAUDE.md` requires the one-time Developer Mode toggle.
+### Uninstall
+
+```bash
+./install.sh --uninstall      # macOS / Linux
+```
+```powershell
+.\install.ps1 -Uninstall      # Windows
+```
+
+Removes the links this repo owns and restores the newest backup of anything the
+installer displaced. Links pointing anywhere else are left strictly alone. Both
+modes accept the dry-run flag.
+
+> **Windows notes:** `install.sh` deliberately **refuses to run under git-bash /
+> MSYS / Cygwin** — `ln -s` there silently *copies* instead of linking, which
+> would leave stale files that never receive repo updates. Use `install.ps1`.
+> File symlinks need Developer Mode (*Settings → Privacy & security → For
+> developers*) or an elevated shell; skill *directories* fall back to a Junction,
+> which needs neither — so skills always link cleanly, and only `CLAUDE.md`
+> requires the one-time Developer Mode toggle.
 
 ## Making your own skill
 
@@ -95,6 +114,14 @@ exists (and silently does nothing if it doesn't — verified against Claude Code
 memory loader). Put anything you don't want public — employer conventions,
 internal tool/agent names, machine-specific paths — in that file. It lives in
 `~/.claude`, never in this repo, so it's impossible to commit by accident.
+
+## Repo hygiene
+
+CI runs `shellcheck` on the shell scripts, PSScriptAnalyzer on the PowerShell
+installer, and a **leak guard**: the build fails if any blocklisted private
+string lands in the tree. The blocklist itself lives *outside* the repo (as the
+`LEAK_BLOCKLIST` GitHub Actions secret — one regex per line) precisely so the
+repo never has to name the things it must not contain.
 
 ## License
 
