@@ -8,10 +8,14 @@ For any non-trivial task — new features, refactors touching multiple files, sc
 
 1. Stay on Opus for planning. If the session is already on Opus, use it directly; do not downgrade mid-plan. If better than Opus exists, use it (eg: claude-fable-5)
 2. Draft an initial plan from your own analysis of the code and the request.
-3. Spawn **at least 3 adversarial agents in parallel** (single message, multiple `Agent` tool calls, `subagent_type: general-purpose` or a more specific type if one fits — e.g. a dedicated `code-reviewer` agent). Each agent should:
+3. Spawn **adversarial agents in parallel** (single message, multiple `Agent` tool calls, `subagent_type: general-purpose` or a more specific type if one fits — e.g. a `security-auditor` or `code-reviewer` agent). **Two critique angles are mandatory on every plan, always:**
+   - **Security** — authn/authz, input validation, injection, secrets and data exposure, unsafe defaults, dependency/supply-chain risk, and anything that widens the attack surface.
+   - **Architecture** — module boundaries, coupling, data flow, blast radius, scalability, fit with existing patterns, and long-term maintainability.
+
+   Then spin up **one or more further agents** with angles that fit the task (correctness/edge-case auditor, simplicity/over-engineering critic, integration reviewer, performance, …) — **at least 3 agents total**. Each agent should:
    - Receive the full plan and the relevant context.
    - Be told its role is to find flaws, missed edge cases, simpler alternatives, or hidden risks — not to rubber-stamp.
-   - Be given a distinct critique angle so they don't all converge on the same objection. Examples: (a) correctness/edge-case auditor, (b) simplicity/over-engineering critic, (c) integration/blast-radius reviewer. Pick angles that fit the task.
+   - Be given a distinct critique angle so they don't all converge on the same objection.
 4. Reconcile their critiques into a final plan. Where agents disagree, surface the disagreement and pick a side with reasoning — do not paper over conflicts.
 5. Write the final plan to **`docs/plans/YYYY-MM-DD-<slug>.md`** in the active project. Use the date from the `currentDate` context, not a guess. The plan file should include:
    - **Goal** — what we're trying to achieve and why.
@@ -26,13 +30,14 @@ For any non-trivial task — new features, refactors touching multiple files, sc
 Once the plan is approved, I drive the whole implement→verify→fix loop and **switch models automatically per phase** — you don't run `/model`. I set the model on each agent I spawn and tell you which model ran the work. (The main orchestrator session stays on Opus; the model changes happen on the spawned agents.)
 
 1. **Drive implementation with `/goal`.** `/goal <condition>` is a built-in Claude Code command (v2.1.139+) that keeps Claude working autonomously across turns until a completion condition holds, re-checking after each turn (fast model). Use it to gate implementation on the approved plan, e.g.
-   `/goal the plan in docs/plans/<file>.md is fully implemented: every file-level change made, nothing derails from the plan's approach, and Opus verification passes`.
+   `/goal the plan in docs/plans/<file>.md is fully implemented: every file-level change made, nothing derails from the plan's approach, Opus verification passes, and the dedicated test pass is green with the change fully covered`.
    Like `/model`, `/goal` is a command *you* type — I can't set it for you, so I'll hand you the exact `/goal …` line to paste (or you set it). On versions without `/goal`, skip it; the same loop below still runs, just without the auto-continue.
 2. **Implement with Sonnet, fanned out.** Do the actual code changes on **Sonnet** agents (`Agent` tool, `model: sonnet`). If the plan touches more than one file — or has independent units of work — spawn **multiple Sonnet agents in parallel** (single message, one `Agent` call per file or cohesive unit) instead of serially. Each agent gets the plan-file path and its slice of the work.
 3. **Implement strictly to the plan; watch for derailment.** If an agent's output deviates (extra scope, a different approach, files not listed in the plan), surface it — don't silently accept or improvise. Stop and flag it.
 4. **Verify with the highest Opus.** After implementation, verify on the strongest **Opus** (main session is already Opus; for isolated checking spawn an `Agent` with `model: opus`). Walk the diff against the plan file item-by-item: every file-level change made? matches the approach? anything derailed? Report pass/fail per plan item. This is the substantive gate — `/goal`'s own per-turn check uses a fast model and only decides whether to keep going.
-5. **Fix loop — re-plan, then Sonnet again.** If verification finds any issue, plan the fix (Opus), then re-implement on **Sonnet** (step 2). Repeat verify→fix until clean — which is also when the `/goal` condition is satisfied.
-6. Keep the plan file updated if scope legitimately changes, so it stays a faithful record.
+5. **Test with a dedicated testing specialist — always.** Once verification passes, hand off to a test-focused agent (`Agent` with `subagent_type: test-runner`, or a `/test` skill) whose *only* job is tests — nothing else. It must: run the full existing suite; **add or expand tests to cover every change** — new code paths, edge cases, error handling, and a regression test for any bug fixed; and report what the change's coverage actually is, not just pass/fail. Nothing is "done" until it is tested and green. Treat an untested or untestable path as a finding to resolve, not a step to skip.
+6. **Fix loop — re-plan, then Sonnet again.** If verification *or* testing surfaces any issue (failing test, uncovered path, regression, derailment), plan the fix (Opus), re-implement on **Sonnet** (step 2), then re-run verify **and** test. Repeat until the diff matches the plan, the suite is green, and the change is fully covered — which is also when the `/goal` condition is satisfied.
+7. Keep the plan file updated if scope legitimately changes, so it stays a faithful record.
 
 ### Automatic model routing (applies to every task)
 
@@ -40,6 +45,7 @@ I switch models automatically and tell you each time — you never need to run `
 - **Reading / researching files → Haiku.** Delegate file reads and "where is X / what does Y do" searches to agents on **Haiku** (`Agent` with `model: haiku`, or the `Explore` agent with `model: haiku`) to save tokens and keep the main context clean. Read directly in the main session only when I need exact text to edit right now.
 - **Planning, verifying, orchestrating → Opus.** The main session stays on Opus.
 - **Implementing → Sonnet**, per Phase 2.
+- **Testing → a dedicated test specialist** (`test-runner` agent or `/test` skill), typically Sonnet-tier — kept separate from implementation so tests get their own focused pass, per Phase 2 step 5.
 
 Mechanics/limitation: I can only set the model on agents I spawn — there is no tool to switch the main session's own model. So "automatic switching" means the main session stays Opus (planner/verifier/orchestrator) while each cheaper phase runs in a Haiku or Sonnet agent I spawn, and I announce which model ran each piece.
 
