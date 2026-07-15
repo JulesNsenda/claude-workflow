@@ -11,13 +11,38 @@
 # are replaced in place (they hold no data).
 #
 # Usage:
-#   ./install.sh            # link everything
-#   ./install.sh --dry-run  # show what would happen, change nothing
+#   ./install.sh               # link everything
+#   ./install.sh --dry-run     # show what would happen, change nothing
+#   ./install.sh --uninstall   # remove links owned by this repo; restore newest backups
+#
+# (--uninstall and --dry-run can be combined.)
 
 set -euo pipefail
+shopt -s nullglob
+
+# git-bash / MSYS / Cygwin have no real `ln -s` by default — it silently DEEP-
+# COPIES, which "succeeds" but leaves stale copies that never receive repo
+# updates. Refuse and point at the PowerShell installer instead.
+# (CLAUDE_WORKFLOW_ALLOW_MSYS=1 bypasses the guard, for testing only.)
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*)
+    if [[ "${CLAUDE_WORKFLOW_ALLOW_MSYS:-}" != "1" ]]; then
+      echo "error: this shell can't create real symlinks ('ln -s' silently copies here)." >&2
+      echo "On Windows, use the PowerShell installer instead:  .\\install.ps1" >&2
+      exit 1
+    fi
+    ;;
+esac
 
 DRY_RUN=0
-[[ "${1:-}" == "--dry-run" ]] && DRY_RUN=1
+UNINSTALL=0
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run)   DRY_RUN=1 ;;
+    --uninstall) UNINSTALL=1 ;;
+    *) echo "unknown option: $arg (use --dry-run and/or --uninstall)" >&2; exit 2 ;;
+  esac
+done
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLAUDE_DIR="${HOME}/.claude"
@@ -62,11 +87,66 @@ link() {
   info "linked: ${dst/#$HOME/\~} -> ${src/#$HOME/\~}"
 }
 
+unlink_target() {
+  # unlink_target <target> — remove the link if it points into this repo, then
+  # restore the newest backup when the slot is (or would be) empty. Anything
+  # that isn't our link is left strictly alone.
+  local dst="$1" tgt removed=0 newest="" b
+
+  if [[ -L "$dst" ]]; then
+    tgt="$(readlink "$dst")"
+    case "$tgt" in
+      "$REPO_DIR"|"$REPO_DIR"/*)
+        if [[ $DRY_RUN -eq 1 ]]; then
+          info "would unlink: ${dst/#$HOME/\~}"
+        else
+          rm -f "$dst"
+          info "unlinked: ${dst/#$HOME/\~}"
+        fi
+        removed=1
+        ;;
+      *) info "skip (links elsewhere): ${dst/#$HOME/\~}" ;;
+    esac
+  elif [[ -e "$dst" ]]; then
+    info "skip (not a link — left in place): ${dst/#$HOME/\~}"
+  fi
+
+  # Backup names are timestamped, so the lexicographically last match is newest.
+  for b in "$dst".backup.*; do newest="$b"; done
+  if [[ -n "$newest" ]] && { [[ $removed -eq 1 ]] || [[ ! -e "$dst" && ! -L "$dst" ]]; }; then
+    if [[ $DRY_RUN -eq 1 ]]; then
+      info "would restore backup: ${newest##*/}"
+    else
+      mv "$newest" "$dst"
+      info "restored backup: ${newest##*/}"
+    fi
+  fi
+}
+
 say "claude-workflow installer"
 say "  repo:   $REPO_DIR"
 say "  target: $CLAUDE_DIR"
-[[ $DRY_RUN -eq 1 ]] && say "  (dry run — no changes)"
+if [[ $UNINSTALL -eq 1 ]]; then say "  mode:   uninstall"; fi
+if [[ $DRY_RUN -eq 1 ]]; then say "  (dry run — no changes)"; fi
 say ""
+
+if [[ $UNINSTALL -eq 1 ]]; then
+  say "CLAUDE.md:"
+  unlink_target "$CLAUDE_DIR/CLAUDE.md"
+
+  say ""
+  say "skills:"
+  found=0
+  for skill in "$REPO_DIR"/skills/*/; do
+    found=1
+    unlink_target "$CLAUDE_DIR/skills/$(basename "$skill")"
+  done
+  if [[ $found -eq 0 ]]; then info "(none in repo)"; fi
+
+  say ""
+  say "Done. Restart Claude Code to pick up changes."
+  exit 0
+fi
 
 mkdir -p "$CLAUDE_DIR/skills"
 
@@ -75,14 +155,13 @@ link "$REPO_DIR/CLAUDE.md" "$CLAUDE_DIR/CLAUDE.md"
 
 say ""
 say "skills:"
-shopt -s nullglob
 found=0
 for skill in "$REPO_DIR"/skills/*/; do
   found=1
   name="$(basename "$skill")"
   link "${skill%/}" "$CLAUDE_DIR/skills/$name"
 done
-[[ $found -eq 0 ]] && info "(none in repo yet)"
+if [[ $found -eq 0 ]]; then info "(none in repo yet)"; fi
 
 say ""
 say "Done. Restart Claude Code to pick up changes."

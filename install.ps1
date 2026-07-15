@@ -25,9 +25,13 @@
   .\install.ps1
 .EXAMPLE
   .\install.ps1 -DryRun
+.EXAMPLE
+  .\install.ps1 -Uninstall
+  # Removes the links this repo owns and restores the newest backup of anything
+  # the installer displaced. Links pointing anywhere else are left alone.
 #>
 [CmdletBinding()]
-param([switch]$DryRun)
+param([switch]$DryRun, [switch]$Uninstall)
 
 $ErrorActionPreference = 'Stop'
 
@@ -98,11 +102,62 @@ function New-Link {
   }
 }
 
+function Remove-Link {
+  # Removes the target if it is a link owned by this repo, then restores the
+  # newest backup when the slot is (or would be) empty. Anything that isn't our
+  # link is left strictly alone. (.Delete() on a junction/symlink removes only
+  # the reparse point — never the linked repo content.)
+  param([string]$Target)
+
+  $short = $Target.Replace($env:USERPROFILE, '~')
+  $removed = $false
+  $linkTarget = Get-LinkTarget $Target
+
+  if ($linkTarget) {
+    if ($linkTarget.StartsWith($RepoDir, [System.StringComparison]::OrdinalIgnoreCase)) {
+      if ($DryRun) { Info "would unlink: $short" }
+      else { (Get-Item -LiteralPath $Target -Force).Delete(); Info "unlinked: $short" }
+      $removed = $true
+    } else {
+      Info "skip (links elsewhere): $short"
+    }
+  } elseif (Test-Path -LiteralPath $Target) {
+    Info "skip (not a link - left in place): $short"
+  }
+
+  # Backup names are timestamped, so the last one sorted by name is newest.
+  $backups = @(Get-ChildItem -Path "$Target.backup.*" -Force -ErrorAction SilentlyContinue | Sort-Object Name)
+  if ($backups.Count -gt 0 -and ($removed -or -not (Test-Path -LiteralPath $Target))) {
+    $newest = $backups[-1]
+    if ($DryRun) { Info "would restore backup: $($newest.Name)" }
+    else { Move-Item -LiteralPath $newest.FullName -Destination $Target; Info "restored backup: $($newest.Name)" }
+  }
+}
+
 Write-Host "claude-workflow installer"
 Write-Host "  repo:   $RepoDir"
 Write-Host "  target: $ClaudeDir"
+if ($Uninstall) { Write-Host "  mode:   uninstall" }
 if ($DryRun) { Write-Host "  (dry run - no changes)" }
 Write-Host ""
+
+if ($Uninstall) {
+  Write-Host "CLAUDE.md:"
+  Remove-Link -Target (Join-Path $ClaudeDir 'CLAUDE.md')
+
+  Write-Host ""
+  Write-Host "skills:"
+  $repoSkills = @()
+  if (Test-Path -LiteralPath (Join-Path $RepoDir 'skills')) {
+    $repoSkills = @(Get-ChildItem -LiteralPath (Join-Path $RepoDir 'skills') -Directory -ErrorAction SilentlyContinue)
+  }
+  if ($repoSkills.Count -eq 0) { Info "(none in repo)" }
+  else { foreach ($s in $repoSkills) { Remove-Link -Target (Join-Path $ClaudeDir "skills\$($s.Name)") } }
+
+  Write-Host ""
+  Write-Host "Done. Restart Claude Code to pick up changes."
+  exit 0
+}
 
 New-Item -ItemType Directory -Force -Path (Join-Path $ClaudeDir 'skills') | Out-Null
 
