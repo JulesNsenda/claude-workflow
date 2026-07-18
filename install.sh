@@ -4,6 +4,9 @@
 #
 # Links:
 #   ~/.claude/CLAUDE.md          -> <repo>/CLAUDE.md
+#   ~/.claude/settings.json      -> <repo>/settings.json   (only into an empty slot —
+#                                   a real settings.json is never displaced)
+#   ~/.claude/agents/<name>.md   -> <repo>/agents/<name>.md (one link per agent file)
 #   ~/.claude/skills/<name>      -> <repo>/skills/<name>   (one link per skill dir)
 #
 # Safe to re-run. Any existing REAL file/dir at a target is backed up to
@@ -135,6 +138,19 @@ if [[ $UNINSTALL -eq 1 ]]; then
   unlink_target "$CLAUDE_DIR/CLAUDE.md"
 
   say ""
+  say "settings.json:"
+  unlink_target "$CLAUDE_DIR/settings.json"
+
+  say ""
+  say "agents:"
+  found=0
+  for agent in "$REPO_DIR"/agents/*.md; do
+    found=1
+    unlink_target "$CLAUDE_DIR/agents/$(basename "$agent")"
+  done
+  if [[ $found -eq 0 ]]; then info "(none in repo)"; fi
+
+  say ""
   say "skills:"
   found=0
   for skill in "$REPO_DIR"/skills/*/; do
@@ -148,10 +164,30 @@ if [[ $UNINSTALL -eq 1 ]]; then
   exit 0
 fi
 
-mkdir -p "$CLAUDE_DIR/skills"
+mkdir -p "$CLAUDE_DIR/skills" "$CLAUDE_DIR/agents"
 
 say "CLAUDE.md:"
 link "$REPO_DIR/CLAUDE.md" "$CLAUDE_DIR/CLAUDE.md"
+
+say ""
+say "settings.json:"
+# Special-cased: a user's existing REAL settings.json holds accumulated
+# permission decisions and hook wiring — never displace it, even with a backup.
+# Link only into an empty slot (or over a symlink, which holds no data).
+if [[ ! -L "$CLAUDE_DIR/settings.json" && -e "$CLAUDE_DIR/settings.json" ]]; then
+  info "skip (real settings.json exists — the repo's permission rules are NOT active until you merge $REPO_DIR/settings.json into it)"
+else
+  link "$REPO_DIR/settings.json" "$CLAUDE_DIR/settings.json"
+fi
+
+say ""
+say "agents:"
+found=0
+for agent in "$REPO_DIR"/agents/*.md; do
+  found=1
+  link "$agent" "$CLAUDE_DIR/agents/$(basename "$agent")"
+done
+if [[ $found -eq 0 ]]; then info "(none in repo yet)"; fi
 
 say ""
 say "skills:"

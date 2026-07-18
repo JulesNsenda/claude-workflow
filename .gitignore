@@ -19,3 +19,6 @@ Thumbs.db
 # Private/machine-local overrides live OUTSIDE git (e.g. ~/.claude/CLAUDE.local.md).
 # Never track a *.local.md that lands in the repo.
 *.local.md
+
+# Working docs (plans, notes) stay local
+/docs/
