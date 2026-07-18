@@ -4,8 +4,11 @@
 
 .DESCRIPTION
   Links:
-    ~/.claude/CLAUDE.md       -> <repo>/CLAUDE.md
-    ~/.claude/skills/<name>   -> <repo>/skills/<name>   (one link per skill dir)
+    ~/.claude/CLAUDE.md         -> <repo>/CLAUDE.md
+    ~/.claude/settings.json     -> <repo>/settings.json  (only into an empty slot -
+                                   a real settings.json is never displaced)
+    ~/.claude/agents/<name>.md  -> <repo>/agents/<name>.md (one link per agent file)
+    ~/.claude/skills/<name>     -> <repo>/skills/<name>   (one link per skill dir)
 
   Safe to re-run. Any existing REAL file/dir at a target is backed up to
   "<target>.backup.<timestamp>" before linking; existing links are replaced.
@@ -94,6 +97,15 @@ function New-Link {
       Info "linked (junction): $shortTarget -> $shortSource"
       return $true
     }
+    # Windows PowerShell 5.1's New-Item ignores the Developer Mode
+    # unprivileged-symlink flag; cmd's mklink honors it. Try it before
+    # deferring (redirects inside cmd so a privilege failure stays silent).
+    cmd /c "mklink ""$Target"" ""$Source"" >nul 2>&1"
+    if ((Get-LinkTarget $Target) -ieq $Source) {
+      if ($backup) { Info "backed up existing -> $(Split-Path $backup -Leaf)" }
+      Info "linked (symlink): $shortTarget -> $shortSource"
+      return $true
+    }
     # Files: no elevation-free link that survives `git pull`. Restore and defer.
     if ($backup) { Move-Item -LiteralPath $backup -Destination $Target }
     Info "DEFERRED (needs elevation): $shortTarget"
@@ -146,6 +158,19 @@ if ($Uninstall) {
   Remove-Link -Target (Join-Path $ClaudeDir 'CLAUDE.md')
 
   Write-Host ""
+  Write-Host "settings.json:"
+  Remove-Link -Target (Join-Path $ClaudeDir 'settings.json')
+
+  Write-Host ""
+  Write-Host "agents:"
+  $repoAgents = @()
+  if (Test-Path -LiteralPath (Join-Path $RepoDir 'agents')) {
+    $repoAgents = @(Get-ChildItem -LiteralPath (Join-Path $RepoDir 'agents') -Filter '*.md' -File -ErrorAction SilentlyContinue)
+  }
+  if ($repoAgents.Count -eq 0) { Info "(none in repo)" }
+  else { foreach ($a in $repoAgents) { Remove-Link -Target (Join-Path $ClaudeDir "agents\$($a.Name)") } }
+
+  Write-Host ""
   Write-Host "skills:"
   $repoSkills = @()
   if (Test-Path -LiteralPath (Join-Path $RepoDir 'skills')) {
@@ -160,9 +185,37 @@ if ($Uninstall) {
 }
 
 New-Item -ItemType Directory -Force -Path (Join-Path $ClaudeDir 'skills') | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $ClaudeDir 'agents') | Out-Null
 
 Write-Host "CLAUDE.md:"
 New-Link -Source (Join-Path $RepoDir 'CLAUDE.md') -Target (Join-Path $ClaudeDir 'CLAUDE.md') | Out-Null
+
+Write-Host ""
+Write-Host "settings.json:"
+# A user's existing REAL settings.json holds accumulated permission decisions
+# and hook wiring - never displace it, even with a backup. Link only into an
+# empty slot (or over an existing link, which holds no data).
+$settingsTarget = Join-Path $ClaudeDir 'settings.json'
+if ((Test-Path -LiteralPath $settingsTarget) -and -not (Get-LinkTarget $settingsTarget)) {
+  Info "skip (real settings.json exists - the repo's permission rules are NOT active until you merge $(Join-Path $RepoDir 'settings.json') into it)"
+} else {
+  New-Link -Source (Join-Path $RepoDir 'settings.json') -Target $settingsTarget | Out-Null
+}
+
+Write-Host ""
+Write-Host "agents:"
+$agentsRoot = Join-Path $RepoDir 'agents'
+$agentFiles = @()
+if (Test-Path -LiteralPath $agentsRoot) {
+  $agentFiles = @(Get-ChildItem -LiteralPath $agentsRoot -Filter '*.md' -File -ErrorAction SilentlyContinue)
+}
+if ($agentFiles.Count -eq 0) {
+  Info "(none in repo yet)"
+} else {
+  foreach ($agent in $agentFiles) {
+    New-Link -Source $agent.FullName -Target (Join-Path $ClaudeDir "agents\$($agent.Name)") | Out-Null
+  }
+}
 
 Write-Host ""
 Write-Host "skills:"
@@ -189,6 +242,7 @@ if ($script:Deferred.Count -gt 0) {
   Write-Host "  * Enable Developer Mode: Settings > Privacy & security > For developers." -ForegroundColor Yellow
   Write-Host ""
   Write-Host "Skills linked fine; only the deferred item(s) above still need this."
+  Write-Host "Until they link, anything that references them by name (e.g. the workflow's named subagents) won't resolve."
   exit 1
 }
 Write-Host "Done. Restart Claude Code to pick up changes."
