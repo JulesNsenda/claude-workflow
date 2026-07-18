@@ -13,8 +13,11 @@ Copy what's useful.
 
 | File | What it is |
 |---|---|
-| [`CLAUDE.md`](./CLAUDE.md) | Global working preferences Claude Code loads on every session — the workflow below. |
-| [`skills/`](./skills/) | On-demand [skills](https://docs.claude.com/en/docs/claude-code/skills). Ships a documented template ([`example-skill`](./skills/example-skill/SKILL.md)) plus a real [`test`](./skills/test/SKILL.md) skill that enforces the "test everything" pass. |
+| [`CLAUDE.md`](./CLAUDE.md) | Always-on rules Claude Code loads every session: the model-tier table, the three gears, and the hard rules. Deliberately small — the procedure lives in the skill below. |
+| [`skills/`](./skills/) | On-demand [skills](https://docs.claude.com/en/docs/claude-code/skills). [`plan-gates`](./skills/plan-gates/SKILL.md) is the full plan → gate → commit procedure; [`test`](./skills/test/SKILL.md) enforces the "test everything" pass; [`example-skill`](./skills/example-skill/SKILL.md) is a documented template. |
+| [`agents/`](./agents/) | [Subagents](https://docs.claude.com/en/docs/claude-code/sub-agents): the adversarial [`security-critic`](./agents/security-critic.md) and [`architecture-critic`](./agents/architecture-critic.md) (read-oriented tools, findings-only output), a [`test-runner`](./agents/test-runner.md) specialist, and an [`Explore`](./agents/explore.md) override pinned to the fast tier (if your Claude Code version doesn't let a user agent shadow the built-in name, set `CLAUDE_CODE_SUBAGENT_MODEL` instead). |
+| [`settings.json`](./settings.json) | Permission hygiene: blocks the **Read tool** from secret paths (`.env*`, `secrets/`, `*.pem`/`*.key`, `~/.ssh`, `~/.aws`), denies the common force-push forms, asks before **every** push, allow-lists routine git commands. |
+| [`.claude-plugin/`](./.claude-plugin/plugin.json) | Plugin manifest, so the skills + agents can also be installed as a namespaced [plugin](https://docs.claude.com/en/docs/claude-code/plugins). |
 | [`install.sh`](./install.sh) / [`install.ps1`](./install.ps1) | Symlink the above into `~/.claude`. Idempotent; backs up anything it would overwrite. |
 
 ## The workflow, in one screen
@@ -95,9 +98,11 @@ flowchart TD
     classDef fast fill:#def0e5,stroke:#4caf7d,color:#1d3a2a
 ```
 
-The authoritative version — including the model-tier table and the exact gates —
-lives in [`CLAUDE.md`](./CLAUDE.md); this summary is deliberately loose so the
-two drift as little as possible.
+The authoritative version is split across the documented primitives:
+[`CLAUDE.md`](./CLAUDE.md) holds the always-on rules (tier table, gears, hard
+rules), the [`plan-gates`](./skills/plan-gates/SKILL.md) skill holds the exact
+phases and gates, and the critics live in [`agents/`](./agents/). This summary
+is deliberately loose so it drifts as little as possible.
 
 ## Install
 
@@ -126,13 +131,19 @@ It creates symlinks so `~/.claude` points back at this repo — edit a file here
 the change is live everywhere immediately, and `git pull` updates your config:
 
 ```
-~/.claude/CLAUDE.md        ->  <repo>/CLAUDE.md
-~/.claude/skills/<name>    ->  <repo>/skills/<name>   (one link per skill folder)
+~/.claude/CLAUDE.md          ->  <repo>/CLAUDE.md
+~/.claude/settings.json      ->  <repo>/settings.json    (unless a real settings.json exists)
+~/.claude/agents/<name>.md   ->  <repo>/agents/<name>.md (one link per agent file)
+~/.claude/skills/<name>      ->  <repo>/skills/<name>    (one link per skill folder)
 ```
 
 It is **safe to re-run**. Any existing *real* file at a target is moved to
 `<target>.backup.<timestamp>` before the symlink is created; existing symlinks are
-replaced in place.
+replaced in place. **Exception: `settings.json` is never displaced** — an
+existing real settings file holds your accumulated permission decisions and
+hook wiring, so the installer skips it and tells you to merge the repo's
+[`settings.json`](./settings.json) manually — and until you merge it, **none of
+the repo's permission rules are active** for you.
 
 ### Uninstall
 
@@ -152,8 +163,36 @@ modes accept the dry-run flag.
 > would leave stale files that never receive repo updates. Use `install.ps1`.
 > File symlinks need Developer Mode (*Settings → Privacy & security → For
 > developers*) or an elevated shell; skill *directories* fall back to a Junction,
-> which needs neither — so skills always link cleanly, and only `CLAUDE.md`
-> requires the one-time Developer Mode toggle.
+> which needs neither — so skills always link cleanly, and only the *file* links
+> (`CLAUDE.md`, `settings.json`, `agents/*.md`) require the one-time Developer
+> Mode toggle.
+
+### Alternative: install as a plugin
+
+The repo doubles as a Claude Code [plugin](https://docs.claude.com/en/docs/claude-code/plugins)
+(`.claude-plugin/plugin.json` at the root; `skills/` and `agents/` are
+auto-discovered). A plugin install gets you the skills and agents, namespaced
+and conflict-free — but **not** `CLAUDE.md` or `settings.json`: plugins don't
+contribute a root `CLAUDE.md` as context, and permission settings stay yours.
+The symlink installer remains the full-fidelity path; the plugin is the
+low-commitment one. **Pick one path, not both** — installing both registers
+every skill and agent twice (once bare, once plugin-namespaced).
+
+## Why no hooks?
+
+Hooks are the right tool for "must happen every time, zero exceptions" — but
+they need project-specific commands (there is no universal "run the suite"),
+and a *global* Stop hook would fire in every project on every turn. So this
+repo ships what *can* be enforced globally: `permissions.deny` rules in
+[`settings.json`](./settings.json), which no allow rule can override. Be clear
+about their honest limits: they block the **Read tool** from secret paths (a
+shell read like `cat .env` instead falls through to a permission prompt), they
+deny the *common* force-push spellings (a trailing `--force` falls through to
+the push prompt — which is why **every** push asks), and none of it applies
+until the settings file is actually linked or merged. Test-gating hooks stay
+a per-project addition. Ask
+Claude to write one where it fits: *"add a Stop hook that runs `npm test` and
+blocks until green."*
 
 ## Making your own skill
 
