@@ -67,10 +67,11 @@ each report says which model ran the work.
    - `/goal the test suite passes (<test command>) and every change-surface item is covered`
    - `/goal the affected flow works end-to-end at runtime, observed — not inferred`
    Without `/goal`, the same loop runs, just without auto-continue.
-2. **Implement on mid-tier agents, fanned out.** One `Agent` call per file or
-   cohesive unit, in parallel where independent. Each agent gets the plan-file
-   path and its slice. Strictly to the plan: if output deviates (extra scope,
-   different approach, unlisted files), surface it — don't silently accept.
+2. **Implement on mid-tier `implementer` agents, fanned out.** One `implementer`
+   `Agent` call per file or cohesive unit, in parallel where independent. Each
+   gets the plan-file path and its slice. Strictly to the plan: if output deviates
+   (extra scope, different approach, unlisted files), surface it — don't silently
+   accept.
 3. **Gate 1 · Conformance (frontier — the main session).** Walk the diff
    against the plan file item by item: every change made? matches the
    approach? anything derailed? Pass/fail per item.

@@ -1,6 +1,6 @@
 {
   "name": "claude-workflow",
-  "description": "Plan → gate → commit workflow with adversarial review: plan-gates + test skills, security/architecture critic subagents, a dedicated test-runner, and a fast-pinned Explore override.",
+  "description": "Plan → gate → commit workflow with adversarial review: plan-gates + test skills, security/architecture critic subagents, an implementer that builds strictly from the approved plan, a dedicated test-runner, and a fast-pinned Explore override.",
   "version": "1.0.0",
   "author": {
     "name": "Jules Nsenda",

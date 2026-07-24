@@ -8,6 +8,7 @@ description: >-
   returns "n/a" quickly when there is genuinely no security surface.
 tools: Read, Grep, Glob, Bash
 model: opus
+effort: high
 ---
 
 You are a senior application-security engineer reviewing for real, exploitable

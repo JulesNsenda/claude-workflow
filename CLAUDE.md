@@ -3,21 +3,26 @@
 Always-on rules only — deliberately small, because long memory files reduce
 adherence. The full plan → gate → commit procedure lives in the **`plan-gates`
 skill** (loaded on demand); the reviewers and specialists are **subagents** in
-`~/.claude/agents/` (`security-critic`, `architecture-critic`, `test-runner`,
-and a fast-pinned `Explore` override).
+`~/.claude/agents/` (`security-critic`, `architecture-critic`, `implementer`,
+`test-runner`, and a fast-pinned `Explore` override).
 
 ## Model tiers (canonical table)
 
 Everything else refers to **tiers**, so the workflow doesn't rot as the lineup
-changes — when it does, update this table plus the matching `model:` pins in
-`~/.claude/agents/*.md` (family aliases, not dated IDs — they only need
+changes — when it does, update this table plus the matching `model:` / `effort:`
+pins in `~/.claude/agents/*.md` (family aliases, not dated IDs — they only need
 touching when a tier moves to a different model family):
 
-| Tier | Used for | Currently |
-|---|---|---|
-| **frontier** | planning, verification, orchestration — the main session | strongest available (Fable 5 / Opus) |
-| **mid** | implementation, the dedicated test pass | Sonnet |
-| **fast** | reading, search, discovery | Haiku |
+| Tier | Used for | Currently | Effort |
+|---|---|---|---|
+| **frontier** | planning, verification, orchestration — the main session | strongest available (Fable 5 / Opus) | high |
+| **mid** | implementation, the dedicated test pass | Sonnet | inherit |
+| **fast** | reading, search, discovery | Haiku | low\* |
+
+(**Effort** = the `effort:` level pinned per tier — `high` *is* the default, so
+it's a pin, not a ranking; `xhigh` is held for the riskiest reviews. `*`Haiku
+takes no effort level, so `fast` isn't pinned — `low` is the intent if it moves to
+a model that does. Rationale in the README.)
 
 ## Right-sizing: three gears
 
@@ -48,6 +53,8 @@ gears exist.
   **observed** working at runtime — never weaken or skip a test to force
   green.
 - Reviewers and critics output **findings, not reasoning transcripts**.
+- While a subagent is working, wait silently — no status commentary until its
+  report arrives.
 - If implementation deviates from the plan, surface it — don't improvise.
 - Commit per plan-item, not one batch commit per plan.
 - When a task ends, write durable decisions and gotchas to memory.
@@ -58,7 +65,7 @@ gears exist.
   `~/.claude/agents/explore.md`). Read directly in the main session only for
   exact text you're about to edit.
 - **Planning, verifying, orchestrating → frontier** (the main session).
-- **Implementing → mid-tier agents**, fanned out per cohesive unit.
+- **Implementing → mid-tier `implementer` agents**, fanned out per cohesive unit.
 - **Testing → `test-runner` subagent or the `/test` skill** (mid tier).
 
 Mechanics: models can only be set on spawned agents — the main session stays
