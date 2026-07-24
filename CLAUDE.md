@@ -3,8 +3,8 @@
 Always-on rules only — deliberately small, because long memory files reduce
 adherence. The full plan → gate → commit procedure lives in the **`plan-gates`
 skill** (loaded on demand); the reviewers and specialists are **subagents** in
-`~/.claude/agents/` (`security-critic`, `architecture-critic`, `test-runner`,
-and a fast-pinned `Explore` override).
+`~/.claude/agents/` (`security-critic`, `architecture-critic`, `implementer`,
+`test-runner`, and a fast-pinned `Explore` override).
 
 ## Model tiers (canonical table)
 
@@ -64,7 +64,7 @@ gears exist.
   `~/.claude/agents/explore.md`). Read directly in the main session only for
   exact text you're about to edit.
 - **Planning, verifying, orchestrating → frontier** (the main session).
-- **Implementing → mid-tier agents**, fanned out per cohesive unit.
+- **Implementing → mid-tier `implementer` agents**, fanned out per cohesive unit.
 - **Testing → `test-runner` subagent or the `/test` skill** (mid tier).
 
 Mechanics: models can only be set on spawned agents — the main session stays
