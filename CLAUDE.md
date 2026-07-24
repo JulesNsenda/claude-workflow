@@ -17,11 +17,12 @@ touching when a tier moves to a different model family):
 |---|---|---|---|
 | **frontier** | planning, verification, orchestration — the main session | strongest available (Fable 5 / Opus) | high |
 | **mid** | implementation, the dedicated test pass | Sonnet | inherit |
-| **fast** | reading, search, discovery | Haiku | low |
+| **fast** | reading, search, discovery | Haiku | low\* |
 
 (**Effort** = the `effort:` level pinned per tier — `high` *is* the default, so
-it's a pin, not a ranking; `xhigh` is held for the riskiest reviews. Rationale in
-the README.)
+it's a pin, not a ranking; `xhigh` is held for the riskiest reviews. `*`Haiku
+takes no effort level, so `fast` isn't pinned — `low` is the intent if it moves to
+a model that does. Rationale in the README.)
 
 ## Right-sizing: three gears
 

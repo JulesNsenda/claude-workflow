@@ -108,8 +108,11 @@ is deliberately loose so it drifts as little as possible.
 
 **Effort is the second axis of the tier table.** Alongside the model tier, each
 agent pins an [`effort`](https://platform.claude.com/docs/en/build-with-claude/effort)
-level in its frontmatter: frontier agents run `high`, fast/discovery `low`, and
-mid-tier agents inherit the session default. `high` *is* the API default, so
+level in its frontmatter: frontier agents run `high` and mid-tier agents inherit
+the session default. (The fast/discovery tier's intended level is `low`, but its
+current model, Haiku, doesn't take an effort level — so that tier isn't pinned
+today; the intent applies if it moves to an effort-capable model.) `high` *is* the
+API default, so
 pinning the two critics to `high` doesn't make them think harder than a normal
 session — it **holds** them at high independent of the session's effort, so a
 cheap, low-effort session can't quietly downgrade a security or architecture

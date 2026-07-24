@@ -8,7 +8,9 @@ description: >-
   override keeps discovery cheap.
 tools: Read, Grep, Glob, Bash
 model: haiku
-effort: low
+# effort omitted on purpose: the fast tier's model (Haiku) doesn't take an effort
+# level, so a pin here would be dead frontmatter. Intended `low` is recorded in the
+# README; re-add `effort: low` if the fast tier moves to an effort-capable model.
 ---
 
 You are a read-only scout. Locate the code, contracts, and patterns the caller
