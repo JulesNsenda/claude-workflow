@@ -15,7 +15,7 @@ Copy what's useful.
 |---|---|
 | [`CLAUDE.md`](./CLAUDE.md) | Always-on rules Claude Code loads every session: the model-tier table, the three gears, and the hard rules. Deliberately small — the procedure lives in the skill below. |
 | [`skills/`](./skills/) | On-demand [skills](https://docs.claude.com/en/docs/claude-code/skills). [`plan-gates`](./skills/plan-gates/SKILL.md) is the full plan → gate → commit procedure; [`test`](./skills/test/SKILL.md) enforces the "test everything" pass; [`example-skill`](./skills/example-skill/SKILL.md) is a documented template. |
-| [`agents/`](./agents/) | [Subagents](https://docs.claude.com/en/docs/claude-code/sub-agents): the adversarial [`security-critic`](./agents/security-critic.md) and [`architecture-critic`](./agents/architecture-critic.md) (read-oriented tools, findings-only output), a [`test-runner`](./agents/test-runner.md) specialist, and an [`Explore`](./agents/explore.md) override pinned to the fast tier (if your Claude Code version doesn't let a user agent shadow the built-in name, set `CLAUDE_CODE_SUBAGENT_MODEL` instead). |
+| [`agents/`](./agents/) | [Subagents](https://docs.claude.com/en/docs/claude-code/sub-agents): the adversarial [`security-critic`](./agents/security-critic.md) and [`architecture-critic`](./agents/architecture-critic.md) (read-oriented tools, findings-only output), an [`implementer`](./agents/implementer.md) that builds strictly from the approved plan (no web/research tools), a [`test-runner`](./agents/test-runner.md) specialist, and an [`Explore`](./agents/explore.md) override pinned to the fast tier (if your Claude Code version doesn't let a user agent shadow the built-in name, set `CLAUDE_CODE_SUBAGENT_MODEL` instead). |
 | [`settings.json`](./settings.json) | Permission hygiene: blocks the **Read tool** from secret paths (`.env*`, `secrets/`, `*.pem`/`*.key`, `~/.ssh`, `~/.aws`), denies the common force-push forms, asks before **every** push, allow-lists routine git commands. |
 | [`.claude-plugin/`](./.claude-plugin/plugin.json) | Plugin manifest, so the skills + agents can also be installed as a namespaced [plugin](https://docs.claude.com/en/docs/claude-code/plugins). |
 | [`install.sh`](./install.sh) / [`install.ps1`](./install.ps1) | Symlink the above into `~/.claude`. Idempotent; backs up anything it would overwrite. |
@@ -103,6 +103,34 @@ The authoritative version is split across the documented primitives:
 rules), the [`plan-gates`](./skills/plan-gates/SKILL.md) skill holds the exact
 phases and gates, and the critics live in [`agents/`](./agents/). This summary
 is deliberately loose so it drifts as little as possible.
+
+## Effort, and harness assumptions
+
+**Effort is the second axis of the tier table.** Alongside the model tier, each
+agent pins an [`effort`](https://platform.claude.com/docs/en/build-with-claude/effort)
+level in its frontmatter: frontier agents run `high`, fast/discovery `low`, and
+mid-tier agents inherit the session default. `high` *is* the API default, so
+pinning the two critics to `high` doesn't make them think harder than a normal
+session — it **holds** them at high independent of the session's effort, so a
+cheap, low-effort session can't quietly downgrade a security or architecture
+review. `xhigh` is reserved for the riskiest full-gear reviews. (This is Claude
+Code's subagent `effort:` field — distinct from Claude Managed Agents'
+`model.effort`.)
+
+**Harness assumptions — Claude Code ≥ 2.1.218** (version-specific, so stamped):
+
+- **Assumes ≥ 2.1.218**, where `/code-review` — this workflow's Gate 2 — runs as a
+  *background subagent*, so reviewing the diff no longer eats the orchestrator's
+  context.
+- If you **extend** this repo, mind the current subagent defaults: subagents no
+  longer spawn nested subagents by default (raise
+  `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH` to allow deeper nesting); concurrent
+  subagents are capped (`CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS`, default 20); and
+  `--max-budget-usd` now halts background subagents once the cap is hit — worth
+  setting for unattended runs.
+- **This workflow is unaffected by the no-nesting default:** every agent here
+  spawns depth-1 from the main session, so nothing here needs
+  `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH`.
 
 ## Install
 
