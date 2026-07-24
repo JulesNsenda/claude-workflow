@@ -52,6 +52,8 @@ gears exist.
   **observed** working at runtime — never weaken or skip a test to force
   green.
 - Reviewers and critics output **findings, not reasoning transcripts**.
+- While a subagent is working, wait silently — no status commentary until its
+  report arrives.
 - If implementation deviates from the plan, surface it — don't improvise.
 - Commit per plan-item, not one batch commit per plan.
 - When a task ends, write durable decisions and gotchas to memory.
