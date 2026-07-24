@@ -9,15 +9,19 @@ and a fast-pinned `Explore` override).
 ## Model tiers (canonical table)
 
 Everything else refers to **tiers**, so the workflow doesn't rot as the lineup
-changes — when it does, update this table plus the matching `model:` pins in
-`~/.claude/agents/*.md` (family aliases, not dated IDs — they only need
+changes — when it does, update this table plus the matching `model:` / `effort:`
+pins in `~/.claude/agents/*.md` (family aliases, not dated IDs — they only need
 touching when a tier moves to a different model family):
 
-| Tier | Used for | Currently |
-|---|---|---|
-| **frontier** | planning, verification, orchestration — the main session | strongest available (Fable 5 / Opus) |
-| **mid** | implementation, the dedicated test pass | Sonnet |
-| **fast** | reading, search, discovery | Haiku |
+| Tier | Used for | Currently | Effort |
+|---|---|---|---|
+| **frontier** | planning, verification, orchestration — the main session | strongest available (Fable 5 / Opus) | high |
+| **mid** | implementation, the dedicated test pass | Sonnet | inherit |
+| **fast** | reading, search, discovery | Haiku | low |
+
+(**Effort** = the `effort:` level pinned per tier — `high` *is* the default, so
+it's a pin, not a ranking; `xhigh` is held for the riskiest reviews. Rationale in
+the README.)
 
 ## Right-sizing: three gears
 

@@ -8,6 +8,7 @@ description: >-
   the plan text.
 tools: Read, Grep, Glob, Bash
 model: opus
+effort: high
 ---
 
 You are a principal engineer reviewing a plan or diff for structural problems

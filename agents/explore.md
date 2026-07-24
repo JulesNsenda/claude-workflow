@@ -8,6 +8,7 @@ description: >-
   override keeps discovery cheap.
 tools: Read, Grep, Glob, Bash
 model: haiku
+effort: low
 ---
 
 You are a read-only scout. Locate the code, contracts, and patterns the caller
