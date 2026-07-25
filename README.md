@@ -20,6 +20,7 @@ Copy what's useful.
 | [`.claude-plugin/`](./.claude-plugin/plugin.json) | Plugin manifest, so the skills + agents can also be installed as a namespaced [plugin](https://docs.claude.com/en/docs/claude-code/plugins). |
 | [`scripts/`](./scripts/) | The leak guard, [`run-stats.sh`](./scripts/run-stats.sh) (the run-stats aggregator), and [`ref-check.sh`](./scripts/ref-check.sh), which asserts the docs and the `agents/`+`skills/` tree still name each other correctly. **Not** symlinked by the installer — run these from the clone. |
 | [`install.sh`](./install.sh) / [`install.ps1`](./install.ps1) | Symlink the above into `~/.claude`. Idempotent; backs up anything it would overwrite. |
+| [`CHANGELOG.md`](./CHANGELOG.md) | What changed per release, and what major/minor/patch mean for a config repo. Tags track the version in the plugin manifest — pin a clone with `git checkout v1.0.0` if you don't want `main` to move under you. |
 
 ## The workflow, in one screen
 
