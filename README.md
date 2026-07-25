@@ -15,8 +15,8 @@ Copy what's useful.
 |---|---|
 | [`CLAUDE.md`](./CLAUDE.md) | Always-on rules Claude Code loads every session: the model-tier table, the three gears, and the hard rules. Deliberately small — the procedure lives in the skill below. |
 | [`skills/`](./skills/) | On-demand [skills](https://docs.claude.com/en/docs/claude-code/skills). [`plan-gates`](./skills/plan-gates/SKILL.md) is the full plan → gate → commit procedure; [`test`](./skills/test/SKILL.md) enforces the "test everything" pass; [`example-skill`](./skills/example-skill/SKILL.md) is a documented template. |
-| [`agents/`](./agents/) | [Subagents](https://docs.claude.com/en/docs/claude-code/sub-agents): the adversarial [`security-critic`](./agents/security-critic.md) and [`architecture-critic`](./agents/architecture-critic.md) (read-oriented tools, findings-only output), an [`implementer`](./agents/implementer.md) that builds strictly from the approved plan (no web/research tools), a [`test-runner`](./agents/test-runner.md) specialist, and an [`Explore`](./agents/explore.md) override pinned to the fast tier (if your Claude Code version doesn't let a user agent shadow the built-in name, set `CLAUDE_CODE_SUBAGENT_MODEL` instead). |
-| [`settings.json`](./settings.json) | Mostly permission hygiene: blocks the **Read tool** from secret paths (`.env*`, `secrets/`, `*.pem`/`*.key`, `~/.ssh`, `~/.aws`), denies the common force-push forms, asks before **every** push, allow-lists routine git commands. Plus one advisory behavioural default — `workflowSizeGuideline: small` (needs ≥ 2.1.219; documented in the Claude Code CHANGELOG rather than the settings reference), which asks Claude to aim under 5 agents in any *dynamic workflow* it writes. That is a different mechanism from this repo's own subagents, which it does not touch — and it is advice, not a cap. If you merge this file by hand, merge the `permissions` block first and independently: it is the part that is load-bearing. |
+| [`agents/`](./agents/) | [Subagents](https://docs.claude.com/en/docs/claude-code/sub-agents): the adversarial [`security-critic`](./agents/security-critic.md) and [`architecture-critic`](./agents/architecture-critic.md) (read-oriented tools, findings-only output), an [`implementer`](./agents/implementer.md) that builds strictly from the approved plan (no web/research tools), a [`test-runner`](./agents/test-runner.md) specialist, and an [`Explore`](./agents/explore.md) override pinned to the fast tier. (If your Claude Code version doesn't let a user agent shadow the built-in name, note that the usual workaround — `CLAUDE_CODE_SUBAGENT_MODEL` — is **not** an Explore-only lever: it outranks every subagent's `model:` frontmatter, so it would silently drop the two `opus`-pinned critics onto the fast tier too. Prefer the override file.) |
+| [`settings.json`](./settings.json) | Mostly permission hygiene: blocks the **Read tool** from secret paths (`.env*`, `secrets/`, `*.pem`/`*.key`, `~/.ssh`, `~/.aws`), denies the common force-push forms, asks before **every** push, allow-lists routine git commands. Plus one advisory behavioural default — `workflowSizeGuideline: small`, which asks Claude to aim under 5 agents in any *dynamic workflow* it writes. That is a different mechanism from this repo's own subagents, which it does not touch — and it is advice, not a cap. Setting it from a settings file needs ≥ 2.1.219 (`/config` has offered it since 2.1.202). If you merge this file by hand, merge the `permissions` block first and independently: it is the part that is load-bearing. And note the direction the installer's symlink runs — once linked, upstream changes to this file land in your live config on `git pull`, so `cp -L` it to a real file if you want to gate that. |
 | [`.claude-plugin/`](./.claude-plugin/plugin.json) | Plugin manifest, so the skills + agents can also be installed as a namespaced [plugin](https://docs.claude.com/en/docs/claude-code/plugins). |
 | [`install.sh`](./install.sh) / [`install.ps1`](./install.ps1) | Symlink the above into `~/.claude`. Idempotent; backs up anything it would overwrite. |
 
@@ -185,15 +185,18 @@ platform schedule:
 
 ### Model assumptions — Opus 5 era, Claude Code ≥ 2.1.219
 
-Also version-stamped. Three facts that decide how to read the tier table:
+Three facts that decide how to read the tier table, then cost context and what
+was watched but not adopted (those two carry no version stamp):
 
-- **"Strongest available" maps to `best`, not `opus`.** `best` resolves to
-  Fable 5 where your organization has access to it, *otherwise the latest
-  Opus* — so where Fable 5 isn't available the two land on the same model.
-  Two further resolutions are easy to conflate: the **`opus` alias** varies by
-  **provider**, while the **`default` setting** varies by **account type**
-  (Opus 5 on Max, Team Premium, Enterprise pay-as-you-go and the API; Sonnet 5
-  on Pro, Team Standard and Enterprise subscription seats). See the
+- **The critics pin `opus`, which is not the same as "strongest available".**
+  `best` resolves to Fable 5 where your organization has access to it,
+  *otherwise the latest Opus* — so on an org with Fable 5, `best` and `opus`
+  diverge and these agents run the Opus. That is a deliberate cost choice, not
+  an oversight; switch the two `model:` pins to `best` if you'd rather have the
+  ceiling. Watch one edge: `opus` resolves by **provider**, and on Microsoft
+  Foundry it lands on Opus 4.6. Separately, the **`default` setting** varies by
+  **account type** (Sonnet 5 on Pro, Team Standard and Enterprise subscription
+  seats) — a different axis from the alias, and easy to conflate. See the
   [model-config docs](https://code.claude.com/docs/en/model-config) for both
   tables rather than trusting a copy here.
 - **A report line naming a previous Opus is expected, not a routing bug.**
@@ -202,10 +205,15 @@ Also version-stamped. Three facts that decide how to read the tier table:
   refuses outright with no fallback. Critically, **the session then continues
   on the fallback model until you run `/model`** — so a security review that
   trips the classifier can leave the rest of the session downgraded, which is
-  exactly why every agent report opens with a `model:` line. You can turn the
-  automatic switch off in `/config`, and `claude --safe-mode` isolates whether
-  repo content is the trigger (git status and directory names still load, and
-  permissions still apply).
+  exactly why every agent report opens with a `model:` line. Under an
+  `availableModels` allowlist that excludes the fallback target the request
+  ends in a refusal instead, leaving the session's model unchanged — a
+  different failure mode with the same cause. Turning the automatic switch off
+  in `/config` makes a flagged request pause and ask instead. `claude
+  --safe-mode` tells you whether **your customizations** are the trigger — it
+  disables CLAUDE.md, skills, MCP servers, hooks *and this repo's agents*,
+  while git status and directory names still load, so it does not rule out the
+  repository's own content.
 - **Effort carries over between models.** Opus 5 does *not* reset to its own
   default when you switch to it — a level you previously set carries over, and
   `low`/`medium`/`high`/`xhigh` persist across sessions once set interactively
@@ -215,15 +223,16 @@ Also version-stamped. Three facts that decide how to read the tier table:
 On cost: Opus 5 is not a step up from the previous frontier Opus — same
 per-token price, with a 1M-token context window as both its default and its
 maximum. In Claude Code that window is included on Max, Team and Enterprise and
-needs usage credits on Pro. Fast mode runs it at roughly 2.5× speed, billed to
-usage credits. Current numbers live on the
+needs usage credits on Pro. Fast mode runs it up to 2.5× faster, billed to
+usage credits on subscription plans. Current numbers live on the
 [pricing page](https://claude.com/pricing); this repo deliberately carries none.
 
-**Watched, not adopted.** Mid-conversation tool changes and server-side
-automatic fallbacks are both in beta and both platform-side — they are API
-request features, with nothing for a Claude Code configuration repo to adopt
-yet. Noted here so the next person to read the Opus 5 release notes knows they
-were considered and skipped, not missed.
+**Watched, not adopted.** The Messages API's *mid-conversation tool changes*
+and *server-side fallback* betas are both platform-side request features, with
+nothing for a Claude Code configuration repo to adopt yet. Both are distinct
+from the classifier fallback described above and from Claude Code's
+`--fallback-model` chains, which are live and not beta. Noted so the next
+person reading the Opus 5 release notes can see they were considered.
 
 ## Install
 

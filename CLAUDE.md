@@ -15,17 +15,15 @@ touching when a tier moves to a different model family):
 
 | Tier | Used for | Currently | Effort |
 |---|---|---|---|
-| **frontier** | planning, verification, orchestration — the main session | strongest available (Fable 5 / Opus 5 — the latter when cost matters) | high |
+| **frontier** | planning, verification, orchestration — the main session | strongest available (Fable 5 / Opus) | high |
 | **mid** | implementation, the dedicated test pass | Sonnet | inherit |
 | **fast** | reading, search, discovery | Haiku | low\* |
 
 (**Effort** = the `effort:` level pinned per tier — `high` *is* the default, so
-it's a pin, not a ranking. `xhigh` is a **session lever** (`/effort`), not a pin
-here: frontmatter overrides session effort, so raising it escalates the
-orchestrator and un-pinned agents but *not* the pinned critics — risk-tier a
-review by adding an angle, not effort. `*`Haiku takes no effort level, so `fast`
-isn't pinned — `low` is the intent if it moves to a model that does. Rationale
-in the README.)
+it's a pin, not a ranking. `xhigh` is a session lever (`/effort`), not a pin —
+it doesn't reach the pinned critics, so risk-tier a review by adding an angle,
+not effort. `*`Haiku takes no effort level, so `fast` isn't pinned — `low` is
+the intent if it moves to a model that does. Rationale in the README.)
 
 ## Right-sizing: three gears
 
@@ -59,8 +57,7 @@ gears exist.
 - While a subagent is working, wait silently — no status commentary until its
   report arrives. Cadence otherwise: one sentence before the first tool call,
   updates only on a finding or a change of direction, outcome first when you
-  finish. Match written deliverables to what the task needs — no filler
-  sections, no redundant summaries.
+  finish.
 - Never spawn a subagent to re-check work you have already verified yourself —
   but every reviewer the gears table or `plan-gates` calls for (the diff
   critics, the dedicated test pass, runtime verification) is independent
