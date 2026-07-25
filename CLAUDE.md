@@ -20,9 +20,10 @@ touching when a tier moves to a different model family):
 | **fast** | reading, search, discovery | Haiku | low\* |
 
 (**Effort** = the `effort:` level pinned per tier — `high` *is* the default, so
-it's a pin, not a ranking; `xhigh` is held for the riskiest reviews. `*`Haiku
-takes no effort level, so `fast` isn't pinned — `low` is the intent if it moves to
-a model that does. Rationale in the README.)
+it's a pin, not a ranking. `xhigh` is a session lever (`/effort`), not a pin —
+it doesn't reach the pinned critics, so risk-tier a review by adding an angle,
+not effort. `*`Haiku takes no effort level, so `fast` isn't pinned — `low` is
+the intent if it moves to a model that does. Rationale in the README.)
 
 ## Right-sizing: three gears
 
@@ -54,7 +55,13 @@ gears exist.
   green.
 - Reviewers and critics output **findings, not reasoning transcripts**.
 - While a subagent is working, wait silently — no status commentary until its
-  report arrives.
+  report arrives. Cadence otherwise: one sentence before the first tool call,
+  updates only on a finding or a change of direction, outcome first when you
+  finish.
+- Never spawn a subagent to re-check work you have already verified yourself —
+  but every reviewer the gears table or `plan-gates` calls for (the diff
+  critics, the dedicated test pass, runtime verification) is independent
+  review, not double-checking, and always runs.
 - If implementation deviates from the plan, surface it — don't improvise.
 - Commit per plan-item, not one batch commit per plan.
 - When a task ends, write durable decisions and gotchas to memory.
@@ -62,14 +69,16 @@ gears exist.
 ## Model routing (automatic — the user never runs /model)
 
 - **Reading / discovery → `Explore` subagent** (pinned to the fast tier via
-  `~/.claude/agents/explore.md`). Read directly in the main session only for
-  exact text you're about to edit.
+  `~/.claude/agents/explore.md`). Read directly in the main session for exact
+  text you're about to edit, or a lookup a handful of tool calls would finish —
+  spawning costs more than it saves below that floor.
 - **Planning, verifying, orchestrating → frontier** (the main session).
 - **Implementing → mid-tier `implementer` agents**, fanned out per cohesive unit.
 - **Testing → `test-runner` subagent or the `/test` skill** (mid tier).
 
-Mechanics: models can only be set on spawned agents — the main session stays
-on the frontier tier, and each report says which model ran the work.
+Mechanics: models can only be set on spawned agents — the main session stays on
+the frontier tier, and every spawned agent opens its report with a `model:`
+line (`Explore` excepted: it never receives this file).
 
 ## Local, private overrides (optional)
 

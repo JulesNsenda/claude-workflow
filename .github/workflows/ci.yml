@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   leak-check:
     name: Leak guard (no private strings)
@@ -32,7 +35,44 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Lint shell scripts
-        run: shellcheck install.sh scripts/leak-check.sh
+        run: shellcheck install.sh scripts/leak-check.sh scripts/run-stats.sh
+
+  run-stats:
+    name: run-stats.sh smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse the canonical format fixture
+        run: |
+          # docs/ is gitignored, so CI never has real plan files. The tracked
+          # example doubles as the fixture: if its keys drift from the parser,
+          # this fails instead of the drift going unnoticed. Use a dedicated
+          # directory — never $RUNNER_TEMP itself, which holds the leak
+          # blocklist in the job above.
+          fixture="$RUNNER_TEMP/plans-fixture"
+          mkdir -p "$fixture"
+          cp scripts/run-stats.example.md "$fixture/"
+          out=$(bash scripts/run-stats.sh "$fixture")
+          echo "$out"
+          # Assert computed values, not boilerplate: a key rename in either the
+          # fixture or the parser changes these numbers or trips a warning.
+          echo "$out" | grep -q '^Ratios over 1 complete run(s)\.$' \
+            || { echo "::error::fixture did not yield one complete run"; exit 1; }
+          echo "$out" | grep -q '^Actioned findings + escapes: 14 ' \
+            || { echo "::error::arithmetic changed — expected a denominator of 14"; exit 1; }
+          echo "$out" | grep -q 'escaped both passes      7.1%' \
+            || { echo "::error::escape rate changed — expected 7.1%"; exit 1; }
+          # Any of these lines means a key the parser wanted was missing or
+          # unusable — i.e. the format doc and the parser have drifted.
+          if echo "$out" | grep -qE '^(skipped:|[0-9]+ counter|[0-9]+ run\(s\) excluded)'; then
+            echo "::error::fixture keys drifted from the parser allowlist"; exit 1
+          fi
+      - name: Handle the empty case without dying
+        run: |
+          empty="$RUNNER_TEMP/plans-empty"
+          mkdir -p "$empty"
+          bash scripts/run-stats.sh "$empty" | grep -q 'nothing to aggregate' \
+            || { echo "::error::empty directory not handled"; exit 1; }
 
   psscriptanalyzer:
     name: PSScriptAnalyzer

@@ -15,9 +15,10 @@ Copy what's useful.
 |---|---|
 | [`CLAUDE.md`](./CLAUDE.md) | Always-on rules Claude Code loads every session: the model-tier table, the three gears, and the hard rules. Deliberately small — the procedure lives in the skill below. |
 | [`skills/`](./skills/) | On-demand [skills](https://docs.claude.com/en/docs/claude-code/skills). [`plan-gates`](./skills/plan-gates/SKILL.md) is the full plan → gate → commit procedure; [`test`](./skills/test/SKILL.md) enforces the "test everything" pass; [`example-skill`](./skills/example-skill/SKILL.md) is a documented template. |
-| [`agents/`](./agents/) | [Subagents](https://docs.claude.com/en/docs/claude-code/sub-agents): the adversarial [`security-critic`](./agents/security-critic.md) and [`architecture-critic`](./agents/architecture-critic.md) (read-oriented tools, findings-only output), an [`implementer`](./agents/implementer.md) that builds strictly from the approved plan (no web/research tools), a [`test-runner`](./agents/test-runner.md) specialist, and an [`Explore`](./agents/explore.md) override pinned to the fast tier (if your Claude Code version doesn't let a user agent shadow the built-in name, set `CLAUDE_CODE_SUBAGENT_MODEL` instead). |
-| [`settings.json`](./settings.json) | Permission hygiene: blocks the **Read tool** from secret paths (`.env*`, `secrets/`, `*.pem`/`*.key`, `~/.ssh`, `~/.aws`), denies the common force-push forms, asks before **every** push, allow-lists routine git commands. |
+| [`agents/`](./agents/) | [Subagents](https://docs.claude.com/en/docs/claude-code/sub-agents): the adversarial [`security-critic`](./agents/security-critic.md) and [`architecture-critic`](./agents/architecture-critic.md) (read-oriented tools, findings-only output), an [`implementer`](./agents/implementer.md) that builds strictly from the approved plan (no web/research tools), a [`test-runner`](./agents/test-runner.md) specialist, and an [`Explore`](./agents/explore.md) override pinned to the fast tier. (If your Claude Code version doesn't let a user agent shadow the built-in name, note that the usual workaround — `CLAUDE_CODE_SUBAGENT_MODEL` — is **not** an Explore-only lever: it outranks every subagent's `model:` frontmatter, so it would silently drop the two `opus`-pinned critics onto the fast tier too. Prefer the override file.) |
+| [`settings.json`](./settings.json) | Mostly permission hygiene: blocks the **Read tool** from secret paths (`.env*`, `secrets/`, `*.pem`/`*.key`, `~/.ssh`, `~/.aws`), denies the common force-push forms, asks before **every** push, allow-lists routine git commands. Plus one advisory behavioural default — `workflowSizeGuideline: small`, which asks Claude to aim under 5 agents in any *dynamic workflow* it writes. That is a different mechanism from this repo's own subagents, which it does not touch — and it is advice, not a cap. Setting it from a settings file needs ≥ 2.1.219 (`/config` has offered it since 2.1.202). If you merge this file by hand, merge the `permissions` block first and independently: it is the part that is load-bearing. And note the direction the installer's symlink runs — once linked, upstream changes to this file land in your live config on `git pull`, so `cp -L` it to a real file if you want to gate that. |
 | [`.claude-plugin/`](./.claude-plugin/plugin.json) | Plugin manifest, so the skills + agents can also be installed as a namespaced [plugin](https://docs.claude.com/en/docs/claude-code/plugins). |
+| [`scripts/`](./scripts/) | The leak guard and [`run-stats.sh`](./scripts/run-stats.sh), the run-stats aggregator. **Not** symlinked by the installer — run these from the clone. |
 | [`install.sh`](./install.sh) / [`install.ps1`](./install.ps1) | Symlink the above into `~/.claude`. Idempotent; backs up anything it would overwrite. |
 
 ## The workflow, in one screen
@@ -104,7 +105,7 @@ rules), the [`plan-gates`](./skills/plan-gates/SKILL.md) skill holds the exact
 phases and gates, and the critics live in [`agents/`](./agents/). This summary
 is deliberately loose so it drifts as little as possible.
 
-## Effort, and harness assumptions
+## Assumptions, and the knobs behind them
 
 **Effort is the second axis of the tier table.** Alongside the model tier, each
 agent pins an [`effort`](https://platform.claude.com/docs/en/build-with-claude/effort)
@@ -116,24 +117,163 @@ API default, so
 pinning the two critics to `high` doesn't make them think harder than a normal
 session — it **holds** them at high independent of the session's effort, so a
 cheap, low-effort session can't quietly downgrade a security or architecture
-review. `xhigh` is reserved for the riskiest full-gear reviews. (This is Claude
-Code's subagent `effort:` field — distinct from Claude Managed Agents'
-`model.effort`.)
+review. Two documented exceptions to that hold: `CLAUDE_CODE_EFFORT_LEVEL` in
+the environment overrides frontmatter, and Enterprise per-model effort caps
+clamp it. (This is Claude Code's subagent `effort:` field — distinct from Claude
+Managed Agents' `model.effort`.)
 
-**Harness assumptions — Claude Code ≥ 2.1.218** (version-specific, so stamped):
+**`xhigh` is a session lever, not a pin.** No agent here pins it, and Claude
+Code has no per-invocation effort override — the Agent tool takes a `model`
+parameter, but there is no `effort` equivalent. So `/effort xhigh` before a
+high-risk review escalates the orchestrator and any *un-pinned* agent, and
+leaves the two `high`-pinned critics exactly where they were. Risk-tiering
+therefore works by **adding an angle rather than adding effort**: for a diff
+touching auth, payments, or data, Gate 2 spawns an extra task-fit critic.
+
+That also settles the two-pass question. The prompting guide notes review
+accuracy holds at lower effort, "which supports a fast pass at review time and
+a more thorough pass later" — but implementing that literally would mean a
+`medium` pin on a mandatory security gate, which on an `xhigh` session pins it
+*below* what it gets today. Here the plan pass gets a narrower brief and the
+diff pass the full one, with effort pinned at `high` throughout.
+
+### Nesting: the agents this repo defines can't spawn
+
+**No agent defined here is granted a spawn tool.** Every `tools:` list in
+[`agents/`](./agents/) is an allowlist, and none of them includes `Agent` — so
+whatever the platform default is, these agents can't nest through the harness.
+(`Bash` remains a general escape hatch; a depth cap is not a sandbox, and the
+`permissions.deny` rules below constrain the **Read tool**, not shell reads.)
+The uncontrolled edges are the built-ins this repo doesn't define: the
+`general-purpose` task-fit critics the plan-gates panel spawns, and
+`/code-review` at Gate 2. Omitting `Agent` from `tools:` only works for agents
+you define; for the built-ins the levers are `disallowedTools` and the guard
+below.
+
+The **platform default is contested**, so don't rely on it either way. The
+v2.1.219 CHANGELOG says subagents now nest to depth 3 by default (was 1) and
+that `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1` disables nesting; the sub-agents
+reference still says a subagent can't spawn subagents by default, with its
+version note covering only v2.1.172–v2.1.216. Set the variable explicitly if
+you depend on the depth:
+
+```jsonc
+{
+  "permissions": { /* … keep yours … */ },
+  "env": { "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH": "1" }
+}
+```
+
+`"1"` means one layer below the main conversation — subagents that cannot
+delegate further; verify that reading against your installed version. **Merge
+this into your settings, don't paste over them** — the `permissions` block has
+to survive. And check `ls -l ~/.claude/settings.json` first: on a fresh install
+it is a *symlink into this repo*, so editing it in place would put your personal
+environment into a tracked, public file. Replace it with a real copy (`cp -L`)
+before adding anything machine-specific.
+
+### Harness assumptions — Claude Code ≥ 2.1.218
+
+Version-specific, so stamped — everything in this subsection rots on a
+platform schedule:
 
 - **Assumes ≥ 2.1.218**, where `/code-review` — this workflow's Gate 2 — runs as a
   *background subagent*, so reviewing the diff no longer eats the orchestrator's
   context.
-- If you **extend** this repo, mind the current subagent defaults: subagents no
-  longer spawn nested subagents by default (raise
-  `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH` to allow deeper nesting); concurrent
-  subagents are capped (`CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS`, default 20); and
-  `--max-budget-usd` now halts background subagents once the cap is hit — worth
-  setting for unattended runs.
-- **This workflow is unaffected by the no-nesting default:** every agent here
-  spawns depth-1 from the main session, so nothing here needs
-  `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH`.
+- Concurrent subagents are capped (`CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS`,
+  default 20), and `--max-budget-usd` halts background subagents once the
+  budget is hit — worth setting for unattended runs.
+
+### Model assumptions — Opus 5 era, Claude Code ≥ 2.1.219
+
+Three facts that decide how to read the tier table, then cost context and what
+was watched but not adopted (those two carry no version stamp):
+
+- **The critics pin `opus`, which is not the same as "strongest available".**
+  `best` resolves to Fable 5 where your organization has access to it,
+  *otherwise the latest Opus* — so on an org with Fable 5, `best` and `opus`
+  diverge and these agents run the Opus. That is a deliberate cost choice, not
+  an oversight; switch the two `model:` pins to `best` if you'd rather have the
+  ceiling. Watch one edge: `opus` resolves by **provider**, and on Microsoft
+  Foundry it lands on Opus 4.6. Separately, the **`default` setting** varies by
+  **account type** (Sonnet 5 on Pro, Team Standard and Enterprise subscription
+  seats) — a different axis from the alias, and easy to conflate. See the
+  [model-config docs](https://code.claude.com/docs/en/model-config) for both
+  tables rather than trusting a copy here.
+- **A report line naming a previous Opus is expected, not a routing bug.**
+  Opus 5 runs cybersecurity and biology safety classifiers; a
+  cybersecurity-flagged request re-runs on Opus 4.8, and a biology-flagged one
+  refuses outright with no fallback. Critically, **the session then continues
+  on the fallback model until you run `/model`** — so a security review that
+  trips the classifier can leave the rest of the session downgraded, which is
+  exactly why every agent report opens with a `model:` line. Under an
+  `availableModels` allowlist that excludes the fallback target the request
+  ends in a refusal instead, leaving the session's model unchanged — a
+  different failure mode with the same cause. Turning the automatic switch off
+  in `/config` makes a flagged request pause and ask instead. `claude
+  --safe-mode` tells you whether **your customizations** are the trigger — it
+  disables CLAUDE.md, skills, MCP servers, hooks *and this repo's agents*,
+  while git status and directory names still load, so it does not rule out the
+  repository's own content.
+- **Effort carries over between models.** Opus 5 does *not* reset to its own
+  default when you switch to it — a level you previously set carries over, and
+  `low`/`medium`/`high`/`xhigh` persist across sessions once set interactively
+  (`max` is session-only). So the tier table's pins are the source of truth,
+  and an effort level set for one experiment outlives it.
+
+On cost: Opus 5 is not a step up from the previous frontier Opus — same
+per-token price, with a 1M-token context window as both its default and its
+maximum. In Claude Code that window is included on Max, Team and Enterprise and
+needs usage credits on Pro. Fast mode runs it up to 2.5× faster, billed to
+usage credits on subscription plans. Current numbers live on the
+[pricing page](https://claude.com/pricing); this repo deliberately carries none.
+
+**Watched, not adopted.** The Messages API's *mid-conversation tool changes*
+and *server-side fallback* betas are both platform-side request features, with
+nothing for a Claude Code configuration repo to adopt yet. Both are distinct
+from the classifier fallback described above and from Claude Code's
+`--fallback-model` chains, which are live and not beta. Noted so the next
+person reading the Opus 5 release notes can see they were considered.
+
+## Measuring the workflow
+
+Every full-gear run ends by writing a short `## Run stats` block into its plan
+file — findings actioned, rejected and dropped at each critic pass, defects that
+escaped both passes, agents spawned, gates that failed first time.
+[`scripts/run-stats.sh`](./scripts/run-stats.sh) aggregates those blocks; the
+format is [`scripts/run-stats.example.md`](./scripts/run-stats.example.md). It
+takes any number of directories, so the corpus can span projects rather than
+being capped at one repo's runs:
+
+```bash
+scripts/run-stats.sh ~/code/*/docs/plans
+```
+
+The point is to stop describing this workflow with adjectives. What the schema
+actually answers is **critic yield**: how much gets caught at plan stage versus
+diff stage versus escaping both passes. Two other questions worth asking — are
+the gear thresholds right, and where does the token budget go — are *not*
+instrumented: there is no cost or duration key, and the block is only written by
+the full-gear procedure, so lighter runs leave no row (`escalated_from` is the
+only trace one ever existed).
+
+**What these numbers can and can't support.** This is a sample of one person's
+tasks, scored by the same person who chose the workflow — not a benchmark. It
+can support claims about *this* workflow on *this* kind of work, and nothing
+comparative: it cannot tell you this setup beats another one, because there is
+no control. Rejected findings are a signal, not a failure — they measure critic
+noise, which is exactly what you want to watch after telling the critics to stop
+filtering themselves. And the instrument can't see its own miscalibration: a
+ratio computed wrongly, or a key nobody ever fills, looks identical to a healthy
+run. Treat a suspiciously clean column as a reason to check the script, not as a
+result. Every figure is also **self-reported by the actor being graded** — the
+same session decides what to reject and then writes the rejection count — so
+under-reporting is undetectable by construction.
+
+Plan files land in the worked-on project's `docs/plans/`. *This* repo gitignores
+`/docs/`; most projects don't, so add it to that project's `.gitignore` before
+writing a plan file there — those files record which findings you consciously
+rejected, which is not something to push to a shared remote by accident.
 
 ## Install
 
@@ -242,8 +382,11 @@ internal tool/agent names, machine-specific paths — in that file. It lives in
 ## Repo hygiene
 
 CI runs `shellcheck` on the shell scripts, PSScriptAnalyzer on the PowerShell
-installer, and a **leak guard**: the build fails if any blocklisted private
-string lands in the tree. The blocklist itself lives *outside* the repo (as the
+installer, a **smoke test** that parses
+[`scripts/run-stats.example.md`](./scripts/run-stats.example.md) with
+`run-stats.sh` — so the format doc and the parser can't drift apart silently —
+and a **leak guard**: the build fails if any blocklisted private string lands in
+the tree. The blocklist itself lives *outside* the repo (as the
 `LEAK_BLOCKLIST` GitHub Actions secret — one regex per line) precisely so the
 repo never has to name the things it must not contain.
 
