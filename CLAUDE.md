@@ -15,7 +15,7 @@ touching when a tier moves to a different model family):
 
 | Tier | Used for | Currently | Effort |
 |---|---|---|---|
-| **frontier** | planning, verification, orchestration — the main session | strongest available (Fable 5 / Opus) | high |
+| **frontier** | planning, verification, orchestration — the main session | strongest available (Fable 5 / Opus 5 — the latter when cost matters) | high |
 | **mid** | implementation, the dedicated test pass | Sonnet | inherit |
 | **fast** | reading, search, discovery | Haiku | low\* |
 

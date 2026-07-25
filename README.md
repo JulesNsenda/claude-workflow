@@ -183,6 +183,41 @@ platform schedule:
   default 20), and `--max-budget-usd` halts background subagents once the
   budget is hit — worth setting for unattended runs.
 
+### Model assumptions — Opus 5 era, Claude Code ≥ 2.1.219
+
+Also version-stamped. Three facts that decide how to read the tier table:
+
+- **"Strongest available" maps to `best`, not `opus`.** `best` resolves to
+  Fable 5 where your organization has access to it, *otherwise the latest
+  Opus* — so where Fable 5 isn't available the two land on the same model.
+  Two further resolutions are easy to conflate: the **`opus` alias** varies by
+  **provider**, while the **`default` setting** varies by **account type**
+  (Opus 5 on Max, Team Premium, Enterprise pay-as-you-go and the API; Sonnet 5
+  on Pro, Team Standard and Enterprise subscription seats). See the
+  [model-config docs](https://code.claude.com/docs/en/model-config) for both
+  tables rather than trusting a copy here.
+- **A report line naming a previous Opus is expected, not a routing bug.**
+  Opus 5 runs cybersecurity and biology safety classifiers; a
+  cybersecurity-flagged request re-runs on Opus 4.8, and a biology-flagged one
+  refuses outright with no fallback. Critically, **the session then continues
+  on the fallback model until you run `/model`** — so a security review that
+  trips the classifier can leave the rest of the session downgraded, which is
+  exactly why every agent report opens with a `model:` line. You can turn the
+  automatic switch off in `/config`, and `claude --safe-mode` isolates whether
+  repo content is the trigger (git status and directory names still load, and
+  permissions still apply).
+- **Effort carries over between models.** Opus 5 does *not* reset to its own
+  default when you switch to it — a level you previously set carries over, and
+  `low`/`medium`/`high`/`xhigh` persist across sessions once set interactively
+  (`max` is session-only). So the tier table's pins are the source of truth,
+  and an effort level set for one experiment outlives it.
+
+On cost: Opus 5 is not a step up from the previous frontier Opus — same
+per-token price, with a 1M-token context window as both its default and its
+maximum. In Claude Code that window is included on Max, Team and Enterprise and
+needs usage credits on Pro. Current numbers live on the
+[pricing page](https://claude.com/pricing); this repo deliberately carries none.
+
 ## Install
 
 ```bash
