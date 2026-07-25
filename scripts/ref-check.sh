@@ -75,9 +75,18 @@
 # printed with `printf '%s'`, never `echo`, and a name that fails shape
 # validation is never echoed at all (only its source file is).
 #
+# Tested against gawk only, same caveat as run-stats.sh — and here it is not
+# theoretical. awk implementations disagree about CR: gawk under Git Bash strips
+# a trailing CR from $0 itself, mawk on Linux does not. That difference is why
+# the CI fixture for the \r strip puts its CR *between* a backtick span and the
+# role word rather than at end of line, where it would be invisible to gawk.
+# The extractor also uses a dynamically-built regex and print > "/dev/stderr".
+# Treat portability to mawk/busybox awk as unverified rather than assumed.
+#
 # Usage:
 #   scripts/ref-check.sh [root]
-#   # default root: git rev-parse --show-toplevel (from the caller's cwd)
+#   # default root: the git repository containing the CALLER'S cwd, not this
+#   # script's own location (from the caller's cwd)
 #   # REF_CHECK_ALLOW_UNTRACKED=1 required when root is not a git repo
 
 set -eu
