@@ -14,6 +14,19 @@ same one declared in
 the plugin manifest are kept in step, since a plugin install reads the manifest
 and a clone reads the tag.
 
+## [Unreleased]
+
+### Added
+
+- [`scripts/version-check.sh`](./scripts/version-check.sh) and a `version-guard`
+  CI job: the git tag and the `version` field in
+  [`.claude-plugin/plugin.json`](./.claude-plugin/plugin.json) have to agree, and
+  now something checks it rather than it being a convention. CI gained a `v*`
+  tag trigger so the check fires on the tag itself; the job's fixtures run on
+  every push regardless, so the script can't sit unexercised between releases.
+  Detective rather than preventive by design — see
+  [Releases](./README.md#releases) for the ordering that makes that safe.
+
 ## [1.0.0] - 2026-07-25
 
 First tagged release. Everything below already existed on `main`; this entry
