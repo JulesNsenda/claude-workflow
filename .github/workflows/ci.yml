@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   leak-check:
     name: Leak guard (no private strings)
@@ -51,10 +54,19 @@ jobs:
           cp scripts/run-stats.example.md "$fixture/"
           out=$(bash scripts/run-stats.sh "$fixture")
           echo "$out"
-          echo "$out" | grep -q '1 run(s)\.' \
-            || { echo "::error::run-stats.sh did not parse the canonical fixture"; exit 1; }
-          echo "$out" | grep -q 'escape rate' \
-            || { echo "::error::run-stats.sh printed no ratios"; exit 1; }
+          # Assert computed values, not boilerplate: a key rename in either the
+          # fixture or the parser changes these numbers or trips a warning.
+          echo "$out" | grep -q '^Ratios over 1 complete run(s)\.$' \
+            || { echo "::error::fixture did not yield one complete run"; exit 1; }
+          echo "$out" | grep -q '^Actioned findings + escapes: 14 ' \
+            || { echo "::error::arithmetic changed — expected a denominator of 14"; exit 1; }
+          echo "$out" | grep -q 'escaped both passes      7.1%' \
+            || { echo "::error::escape rate changed — expected 7.1%"; exit 1; }
+          # Any of these lines means a key the parser wanted was missing or
+          # unusable — i.e. the format doc and the parser have drifted.
+          if echo "$out" | grep -qE '^(skipped:|[0-9]+ counter|[0-9]+ run\(s\) excluded)'; then
+            echo "::error::fixture keys drifted from the parser allowlist"; exit 1
+          fi
       - name: Handle the empty case without dying
         run: |
           empty="$RUNNER_TEMP/plans-empty"

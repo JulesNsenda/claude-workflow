@@ -21,6 +21,9 @@ lists, no quoting, no anchors. The fence says `yaml` because flat scalars are
 valid YAML, but the parser is not a YAML parser: a nested map's child lines
 would be read as top-level keys.
 
+The numbers below are **illustrative, not a real run** — they exist so the CI
+assertions have something to compute. Don't anchor on them.
+
 ```yaml
 date: 2026-07-25
 slug: opus-5-adoption
@@ -57,8 +60,13 @@ escalated_from: none
 ## Sentinels
 
 - `none` — knowably empty.
-- `unknown` — **not knowable**. Write this rather than guessing; `run-stats.sh`
-  excludes `unknown` from its ratios instead of counting it as zero.
+- `unknown` — **not knowable**. Write this rather than guessing. A run whose
+  counters aren't all integers is dropped from the ratios **entirely** — both
+  numerator and denominator — and reported as excluded. Leaving a counter out,
+  or writing prose like `4 (approx)`, does the same thing and is reported
+  separately. That is deliberate: excluding a term from a sum while keeping the
+  denominator would be arithmetically identical to writing `0`, which would
+  punish the honest answer and flatter the run.
 
 A fabricated number is worse than a missing one. A run where the critics found
 nothing and a defect escaped anyway is the most valuable row in the set — record

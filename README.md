@@ -18,6 +18,7 @@ Copy what's useful.
 | [`agents/`](./agents/) | [Subagents](https://docs.claude.com/en/docs/claude-code/sub-agents): the adversarial [`security-critic`](./agents/security-critic.md) and [`architecture-critic`](./agents/architecture-critic.md) (read-oriented tools, findings-only output), an [`implementer`](./agents/implementer.md) that builds strictly from the approved plan (no web/research tools), a [`test-runner`](./agents/test-runner.md) specialist, and an [`Explore`](./agents/explore.md) override pinned to the fast tier. (If your Claude Code version doesn't let a user agent shadow the built-in name, note that the usual workaround — `CLAUDE_CODE_SUBAGENT_MODEL` — is **not** an Explore-only lever: it outranks every subagent's `model:` frontmatter, so it would silently drop the two `opus`-pinned critics onto the fast tier too. Prefer the override file.) |
 | [`settings.json`](./settings.json) | Mostly permission hygiene: blocks the **Read tool** from secret paths (`.env*`, `secrets/`, `*.pem`/`*.key`, `~/.ssh`, `~/.aws`), denies the common force-push forms, asks before **every** push, allow-lists routine git commands. Plus one advisory behavioural default — `workflowSizeGuideline: small`, which asks Claude to aim under 5 agents in any *dynamic workflow* it writes. That is a different mechanism from this repo's own subagents, which it does not touch — and it is advice, not a cap. Setting it from a settings file needs ≥ 2.1.219 (`/config` has offered it since 2.1.202). If you merge this file by hand, merge the `permissions` block first and independently: it is the part that is load-bearing. And note the direction the installer's symlink runs — once linked, upstream changes to this file land in your live config on `git pull`, so `cp -L` it to a real file if you want to gate that. |
 | [`.claude-plugin/`](./.claude-plugin/plugin.json) | Plugin manifest, so the skills + agents can also be installed as a namespaced [plugin](https://docs.claude.com/en/docs/claude-code/plugins). |
+| [`scripts/`](./scripts/) | The leak guard and [`run-stats.sh`](./scripts/run-stats.sh), the run-stats aggregator. **Not** symlinked by the installer — run these from the clone. |
 | [`install.sh`](./install.sh) / [`install.ps1`](./install.ps1) | Symlink the above into `~/.claude`. Idempotent; backs up anything it would overwrite. |
 
 ## The workflow, in one screen
@@ -239,13 +240,22 @@ person reading the Opus 5 release notes can see they were considered.
 Every full-gear run ends by writing a short `## Run stats` block into its plan
 file — findings actioned, rejected and dropped at each critic pass, defects that
 escaped both passes, agents spawned, gates that failed first time.
-[`scripts/run-stats.sh`](./scripts/run-stats.sh) aggregates those blocks across
-runs; the format is [`scripts/run-stats.example.md`](./scripts/run-stats.example.md).
+[`scripts/run-stats.sh`](./scripts/run-stats.sh) aggregates those blocks; the
+format is [`scripts/run-stats.example.md`](./scripts/run-stats.example.md). It
+takes any number of directories, so the corpus can span projects rather than
+being capped at one repo's runs:
 
-The point is to stop describing this workflow with adjectives. Three questions
-need evidence: do the critics earn their cost (how much is caught at plan stage
-versus diff stage versus escaping to tests and runtime), are the gear thresholds
-right, and where does the token budget actually go.
+```bash
+scripts/run-stats.sh ~/code/*/docs/plans
+```
+
+The point is to stop describing this workflow with adjectives. What the schema
+actually answers is **critic yield**: how much gets caught at plan stage versus
+diff stage versus escaping both passes. Two other questions worth asking — are
+the gear thresholds right, and where does the token budget go — are *not*
+instrumented: there is no cost or duration key, and the block is only written by
+the full-gear procedure, so lighter runs leave no row (`escalated_from` is the
+only trace one ever existed).
 
 **What these numbers can and can't support.** This is a sample of one person's
 tasks, scored by the same person who chose the workflow — not a benchmark. It
@@ -256,10 +266,14 @@ noise, which is exactly what you want to watch after telling the critics to stop
 filtering themselves. And the instrument can't see its own miscalibration: a
 ratio computed wrongly, or a key nobody ever fills, looks identical to a healthy
 run. Treat a suspiciously clean column as a reason to check the script, not as a
-result.
+result. Every figure is also **self-reported by the actor being graded** — the
+same session decides what to reject and then writes the rejection count — so
+under-reporting is undetectable by construction.
 
-Plan files live in `docs/`, which is gitignored — the data stays on your machine
-and is never committed.
+Plan files land in the worked-on project's `docs/plans/`. *This* repo gitignores
+`/docs/`; most projects don't, so add it to that project's `.gitignore` before
+writing a plan file there — those files record which findings you consciously
+rejected, which is not something to push to a shared remote by accident.
 
 ## Install
 
