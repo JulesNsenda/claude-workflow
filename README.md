@@ -27,9 +27,9 @@ Copy what's useful.
 Commit per item**, with the model tier matched to each phase and the rigor
 matched to the risk.
 
-- **Orient first.** Recall project memory and map the affected subsystem with
-  cheap fast-tier agents before planning — a wrong mental model poisons
-  everything downstream.
+- **Orient first.** Recall project memory in the main session — subagents don't
+  inherit it — then map the affected subsystem with cheap fast-tier agents,
+  before planning: a wrong mental model poisons everything downstream.
 - **Adversarial planning.** Draft on the strongest model, then ≥3 parallel
   critics who read the *actual repo*, not just the plan text. **Security and
   architecture are mandatory angles on every plan**; further angles fit the
@@ -59,7 +59,8 @@ flowchart TD
     Gear -->|"feature / refactor /<br/>security-sensitive"| Orient
 
     subgraph P1["Phase 1 — Plan"]
-        Orient["Orient — recall memories,<br/>map the subsystem"]:::fast --> Draft["Draft the plan"]:::frontier
+        Orient["Recall memories —<br/>main session, not a subagent"]:::frontier --> Map["Map the subsystem"]:::fast
+        Map --> Draft["Draft the plan"]:::frontier
         Draft --> Panel["Adversarial panel — at least 3 agents<br/>reading the real repo"]
         Panel --> Sec["Security<br/>(mandatory)"]
         Panel --> Arch["Architecture<br/>(mandatory)"]
@@ -274,6 +275,56 @@ Plan files land in the worked-on project's `docs/plans/`. *This* repo gitignores
 `/docs/`; most projects don't, so add it to that project's `.gitignore` before
 writing a plan file there — those files record which findings you consciously
 rejected, which is not something to push to a shared remote by accident.
+
+## Memory: the built-in mechanism
+
+Everything in this paragraph is a harness fact, checked against Claude Code
+2.1.220 — it rots on a platform schedule, like the assumptions above.
+Claude Code ships a built-in **auto memory** mechanism, on by default
+(`autoMemoryEnabled`, default `true`) — this workflow builds on it rather than
+inventing a parallel one. It writes to `~/.claude/projects/<project>/memory/`:
+a `MEMORY.md` index plus topic files. The `<project>` path is derived from the
+git repository, so all worktrees and subdirectories within the same repo
+share one auto memory directory. Only the first 200 lines of `MEMORY.md`, or
+the first 25KB, whichever comes first, load at session start; topic files
+load on demand. So `MEMORY.md` has to stay an index — one line per entry —
+with detail pushed out into topic files, or the load budget burns on the
+index itself. Auto memory is also machine-local: files aren't shared across
+machines or cloud environments. And it sits outside any repo tree **by
+default** — under `~/.claude/`, not this one — though `autoMemoryDirectory`
+can relocate it from any settings scope (project scope only after the
+workspace trust dialog). Pointing that knob into a repo tree is the one easy
+way to put private notes under version control, so don't; if you must,
+gitignore the target first.
+
+**The entry format is three fields, nothing longer:** **decision**, **why**
+(the reasoning that would otherwise be lost), and **the trap it avoids** (what
+goes wrong for someone who doesn't know this). That's the required **body
+content of an auto-memory file**, not a competing file format — the harness
+already writes these files with YAML frontmatter, and a rival format here
+would be exactly the drift this section exists to prevent.
+
+**The most valuable fact about the mechanism is a constraint, not a feature:**
+the main conversation's auto memory isn't loaded into subagents — the one
+exception is a fork. So recall is a **main-session action** — the `Explore`
+subagent that maps the codebase cannot do it for you. That's why
+[`plan-gates`](./skills/plan-gates/SKILL.md)'s *orient* step recalls *before*
+it hands the codebase map to `Explore`, rather than folding the two together:
+the order is load-bearing, not incidental.
+
+**Privacy split.** Project- or employer-specific material belongs on the
+`~/.claude/CLAUDE.local.md` side of that boundary, never in a tracked tree —
+public or client-private. Worth naming explicitly: a subagent's `memory:`
+frontmatter field with scope `project` writes to `.claude/agent-memory/<agent>/`
+— *inside* the repo. This workflow doesn't use that field. If you ever enable
+it, add `/.claude/` to that project's `.gitignore` first, the same way you'd
+add `/docs/` before writing a plan file there.
+
+What's actually worth writing down, and what isn't, lives in exactly one
+place — the *Capture what you learned* step of
+[`plan-gates`](./skills/plan-gates/SKILL.md) — rather than restated here, the
+same way "Measuring the workflow" above points at
+`scripts/run-stats.example.md` instead of duplicating its key list.
 
 ## Install
 

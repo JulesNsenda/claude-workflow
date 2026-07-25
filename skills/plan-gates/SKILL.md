@@ -20,11 +20,12 @@ reasoning transcripts**.
 
 ## Phase 1 — Plan (frontier)
 
-1. **Orient before planning.** Recall relevant saved memories, then map the
-   part of the codebase the task touches — key files, contracts, existing
-   patterns — using the `Explore` subagent (pinned to the fast tier). Planning
-   on a wrong mental model is the most expensive error there is: the whole
-   pipeline, reviewers included, inherits it.
+1. **Orient before planning.** First, in the main session, recall relevant
+   saved memories — subagents don't inherit them, so this one cannot be
+   delegated. Then map the part of the codebase the task touches — key files,
+   contracts, existing patterns — using the `Explore` subagent (pinned to the
+   fast tier). Planning on a wrong mental model is the most expensive error
+   there is: the whole pipeline, reviewers included, inherits it.
 2. **Draft the plan** from your own analysis of the code and the request, on
    the frontier tier — do not downgrade mid-plan.
 3. **Adversarial panel — at least 3 critics, in parallel** (single message,
@@ -134,4 +135,11 @@ Models switch automatically per phase: the main session stays frontier
    run from the ratios rather than counting as zero, so honesty costs nothing.
 10. **Capture what you learned.** Write durable decisions and gotchas to
     memory; keep the plan file updated if scope legitimately changed so it
-    stays a faithful record.
+    stays a faithful record. Keep an entry to three things — the decision,
+    the why, and the trap it avoids; the README covers the shape. What has
+    proved worth keeping: architectural decisions and the
+    alternatives rejected, non-obvious constraints discovered in the
+    codebase, gotchas that cost real time, and conventions inferred from the
+    code. What stays out of an entry: what was implemented (the plan file and
+    git history already hold that), routine progress, or anything
+    reconstructible from the diff.

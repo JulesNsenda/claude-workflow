@@ -22,3 +22,7 @@ Thumbs.db
 
 # Working docs (plans, notes) stay local
 /docs/
+
+# Subagent project-scope memory writes to .claude/agent-memory/, and
+# leak-check.sh's git grep only sees tracked files — stay untracked here too.
+/.claude/
