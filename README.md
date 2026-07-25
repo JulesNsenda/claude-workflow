@@ -116,9 +116,25 @@ API default, so
 pinning the two critics to `high` doesn't make them think harder than a normal
 session — it **holds** them at high independent of the session's effort, so a
 cheap, low-effort session can't quietly downgrade a security or architecture
-review. `xhigh` is reserved for the riskiest full-gear reviews. (This is Claude
-Code's subagent `effort:` field — distinct from Claude Managed Agents'
-`model.effort`.)
+review. Two documented exceptions to that hold: `CLAUDE_CODE_EFFORT_LEVEL` in
+the environment overrides frontmatter, and Enterprise per-model effort caps
+clamp it. (This is Claude Code's subagent `effort:` field — distinct from Claude
+Managed Agents' `model.effort`.)
+
+**`xhigh` is a session lever, not a pin.** No agent here pins it, and Claude
+Code has no per-invocation effort override — the Agent tool takes a `model`
+parameter, but there is no `effort` equivalent. So `/effort xhigh` before a
+high-risk review escalates the orchestrator and any *un-pinned* agent, and
+leaves the two `high`-pinned critics exactly where they were. Risk-tiering
+therefore works by **adding an angle rather than adding effort**: for a diff
+touching auth, payments, or data, Gate 2 spawns an extra task-fit critic.
+
+That also settles the two-pass question. The prompting guide notes review
+accuracy holds at lower effort, "which supports a fast pass at review time and
+a more thorough pass later" — but implementing that literally would mean a
+`medium` pin on a mandatory security gate, which on an `xhigh` session pins it
+*below* what it gets today. Here the plan pass gets a narrower brief and the
+diff pass the full one, with effort pinned at `high` throughout.
 
 ### Nesting: the agents this repo defines can't spawn
 

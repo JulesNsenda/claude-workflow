@@ -20,9 +20,12 @@ touching when a tier moves to a different model family):
 | **fast** | reading, search, discovery | Haiku | low\* |
 
 (**Effort** = the `effort:` level pinned per tier — `high` *is* the default, so
-it's a pin, not a ranking; `xhigh` is held for the riskiest reviews. `*`Haiku
-takes no effort level, so `fast` isn't pinned — `low` is the intent if it moves to
-a model that does. Rationale in the README.)
+it's a pin, not a ranking. `xhigh` is a **session lever** (`/effort`), not a pin
+here: frontmatter overrides session effort, so raising it escalates the
+orchestrator and un-pinned agents but *not* the pinned critics — risk-tier a
+review by adding an angle, not effort. `*`Haiku takes no effort level, so `fast`
+isn't pinned — `low` is the intent if it moves to a model that does. Rationale
+in the README.)
 
 ## Right-sizing: three gears
 
