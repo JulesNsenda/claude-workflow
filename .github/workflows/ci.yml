@@ -35,7 +35,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Lint shell scripts
-        run: shellcheck install.sh scripts/leak-check.sh scripts/run-stats.sh
+        run: shellcheck install.sh scripts/leak-check.sh scripts/run-stats.sh scripts/ref-check.sh
 
   run-stats:
     name: run-stats.sh smoke test
@@ -73,6 +73,435 @@ jobs:
           mkdir -p "$empty"
           bash scripts/run-stats.sh "$empty" | grep -q 'nothing to aggregate' \
             || { echo "::error::empty directory not handled"; exit 1; }
+
+  ref-check:
+    name: ref-check.sh (docs ↔ agents/skills)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: The repo's own references must resolve
+        # Invoked as `sh`, not `bash`, so the POSIX constraint is exercised
+        # rather than merely linted.
+        run: sh scripts/ref-check.sh
+      - name: Prove every check can fail, one fixture each
+        run: |
+          # A checker that quietly matches nothing exits 0 forever and reads as
+          # green — worse than no checker. So each of the four checks gets its
+          # own broken fixture, and each assertion greps for THAT check's
+          # message rather than only the exit status: asserting exit status
+          # alone lets three of the four checks be deleted with the job still
+          # green (measured). This mirrors the run-stats job, which likewise
+          # asserts computed output rather than a bare exit code.
+          #
+          # REF_CHECK_ALLOW_UNTRACKED=1 is required because the fixtures are not
+          # git repos; the checker otherwise refuses to enumerate untracked
+          # files, which is what stops it reading a private ~/.claude tree.
+          fx="$RUNNER_TEMP/ref-fixture"
+
+          build_good() {
+            rm -rf "$fx"; mkdir -p "$fx/agents" "$fx/skills/demo-skill"
+            printf -- '---\nname: demo-critic\n---\nbody\n' > "$fx/agents/demo-critic.md"
+            printf -- '---\nname: demo-skill\n---\nbody\n' > "$fx/skills/demo-skill/SKILL.md"
+            printf '# R\n\n[c](./agents/demo-critic.md) `demo-critic` `demo-skill`\n' > "$fx/README.md"
+            printf 'The `demo-critic` agent and the `demo-skill` skill.\n' > "$fx/CLAUDE.md"
+          }
+
+          expect_fail() { # $1 = message substring, $2 = label
+            if out=$(REF_CHECK_ALLOW_UNTRACKED=1 sh scripts/ref-check.sh "$fx" 2>&1); then
+              echo "::error::$2: checker reported clean but should have failed"; exit 1
+            fi
+            printf '%s\n' "$out" | grep -qF "$1" || {
+              echo "::error::$2: expected message not found: $1"
+              printf '%s\n' "$out"; exit 1
+            }
+            echo "  ok — $2"
+          }
+
+          build_good
+          REF_CHECK_ALLOW_UNTRACKED=1 sh scripts/ref-check.sh "$fx" \
+            || { echo "::error::good fixture should pass but did not"; exit 1; }
+          echo "  ok — good fixture passes"
+
+          # check 1 — frontmatter name no longer matches its filename
+          build_good
+          printf -- '---\nname: wrong-name\n---\nbody\n' > "$fx/agents/demo-critic.md"
+          expect_fail 'does not match filename' 'check 1 (frontmatter vs filename)'
+
+          # check 2 Rule A — dangling hyphenated reference
+          build_good
+          printf 'The `demo-critic` agent, `demo-skill` skill, `nonexistent-critic`.\n' > "$fx/CLAUDE.md"
+          expect_fail 'unresolved reference' 'check 2 Rule A (hyphenated name)'
+
+          # check 2 Rule B — not hyphenated; caught only by the role word,
+          # across a bold marker, which is the reflow that defeats naive matching
+          build_good
+          printf 'The `demo-critic` agent, `demo-skill` skill, **`ghostagent`** subagent.\n' > "$fx/CLAUDE.md"
+          expect_fail 'unresolved reference' 'check 2 Rule B (role word after bold span)'
+
+          # check 3 — an agent that exists but nothing references
+          build_good
+          printf -- '---\nname: orphan-agent\n---\nbody\n' > "$fx/agents/orphan-agent.md"
+          expect_fail 'is never referenced' 'check 3 (orphaned definition)'
+
+          # check 4 — a README link whose target does not exist
+          build_good
+          printf '# R\n\n[c](./agents/demo-critic.md) [x](./missing.md) `demo-critic` `demo-skill`\n' > "$fx/README.md"
+          expect_fail 'does not exist' 'check 4 (dangling README link)'
+      - name: A fence closes only with the marker that opened it
+        run: |
+          # A ~~~ line inside a ``` block must not close it. If it does, the
+          # rest of the block is tokenized and every backticked example in a
+          # code block becomes a build failure. Asserting the CLEAN case is
+          # what makes this a real test: with fence matching broken, the
+          # phantom reference escapes the block and the run fails.
+          fx="$RUNNER_TEMP/ref-fixture-fence"
+          rm -rf "$fx"; mkdir -p "$fx/agents" "$fx/skills/demo-skill"
+          printf -- '---\nname: demo-critic\n---\nbody\n' > "$fx/agents/demo-critic.md"
+          printf -- '---\nname: demo-skill\n---\nbody\n' > "$fx/skills/demo-skill/SKILL.md"
+          printf '# R\n\n[c](./agents/demo-critic.md) `demo-critic` `demo-skill`\n' > "$fx/README.md"
+          {
+            printf 'The `demo-critic` agent, `demo-skill` skill.\n'
+            printf '```\n~~~\n`phantom-critic`\n```\n'
+          } > "$fx/CLAUDE.md"
+          REF_CHECK_ALLOW_UNTRACKED=1 sh scripts/ref-check.sh "$fx" || {
+            echo "::error::a ~~~ inside a \`\`\` block closed it early — fence marker matching is broken"
+            exit 1
+          }
+          echo "  ok — mismatched fence markers do not close a block"
+      - name: Prove a stray CR cannot silently disarm the classifier
+        run: |
+          # Markdown checks out CRLF on Windows while CI checks out LF, so a
+          # \r regression is invisible here unless a CR is injected on purpose.
+          #
+          # Fixture design matters more than it looks. Appending CR to every
+          # line end (`sed 's/$/\r/'`) is TAUTOLOGICAL — measured: the fixture
+          # still fails with the \r strip removed, because some awks (notably
+          # GNU awk under Git Bash) strip a trailing CR from $0 themselves, and
+          # because a Rule-A break fails either way. The CR only bites in one
+          # position: between a backtick span and the role word that makes
+          # Rule B fire, where the gap class [ \t]* does not match it.
+          #
+          # So the fixture puts it exactly there, and the assertion greps for
+          # the message rather than the exit status. Verified against a mutant
+          # with the \r strip deleted: real script exits 1 naming the token,
+          # mutant reports "clean".
+          fx="$RUNNER_TEMP/ref-fixture-crlf"
+          rm -rf "$fx"; mkdir -p "$fx/agents" "$fx/skills/demo-skill"
+          printf -- '---\nname: demo-critic\n---\nbody\n' > "$fx/agents/demo-critic.md"
+          printf -- '---\nname: demo-skill\n---\nbody\n' > "$fx/skills/demo-skill/SKILL.md"
+          printf '# R\n\n[c](./agents/demo-critic.md) `demo-critic` `demo-skill`\n' > "$fx/README.md"
+          printf 'The `demo-critic` agent, `demo-skill` skill.\nSee **`ghostagent`**\r subagent here.\n' > "$fx/CLAUDE.md"
+          if out=$(REF_CHECK_ALLOW_UNTRACKED=1 sh scripts/ref-check.sh "$fx" 2>&1); then
+            echo "::error::CR-bearing corpus reported clean — the \\r strip is broken"; exit 1
+          fi
+          printf '%s\n' "$out" | grep -qF 'unresolved reference' || {
+            echo "::error::CR corpus failed for the wrong reason — Rule B did not fire, so the \\r strip is broken"
+            printf '%s\n' "$out"; exit 1
+          }
+          echo "  ok — Rule B still fires with a CR between the span and the role word"
+      - name: Refuse to report a false clean pass on an empty tree
+        run: |
+          empty="$RUNNER_TEMP/ref-empty"
+          rm -rf "$empty"; mkdir -p "$empty"
+          printf '# R\n' > "$empty/README.md"
+          printf 'nothing here\n' > "$empty/CLAUDE.md"
+          if out=$(REF_CHECK_ALLOW_UNTRACKED=1 sh scripts/ref-check.sh "$empty" 2>&1); then
+            echo "::error::empty inventory reported clean instead of failing loudly"; exit 1
+          fi
+          printf '%s\n' "$out" | grep -qF 'refusing to report a false clean pass' || {
+            echo "::error::empty tree failed, but not via the fail-loud floor"
+            printf '%s\n' "$out"; exit 1
+          }
+          echo "  ok — empty tree fails loudly"
+      - name: Refuse to enumerate untracked files without an explicit opt-in
+        run: |
+          # The guard that stops `ref-check.sh ~/.claude` printing private
+          # agent and skill names out of an untracked tree.
+          fx="$RUNNER_TEMP/ref-fixture-optin"
+          rm -rf "$fx"; mkdir -p "$fx/agents"
+          printf -- '---\nname: demo-critic\n---\nbody\n' > "$fx/agents/demo-critic.md"
+          printf '# R\n' > "$fx/README.md"
+          printf '`demo-critic` agent\n' > "$fx/CLAUDE.md"
+          if out=$(sh scripts/ref-check.sh "$fx" 2>&1); then
+            echo "::error::non-git tree was enumerated without REF_CHECK_ALLOW_UNTRACKED"; exit 1
+          fi
+          printf '%s\n' "$out" | grep -qF 'refusing to enumerate untracked files' || {
+            echo "::error::non-git tree failed, but not via the opt-in guard"
+            printf '%s\n' "$out"; exit 1
+          }
+          echo "  ok — untracked enumeration requires opt-in"
+      - name: Prove the fail-loud floors, and two silent classifier fail-opens
+        run: |
+          # Three more floors guard against a checker that quietly matches
+          # nothing: zero backtick tokens extracted at all, zero of those
+          # tokens surviving Rule A/B classification, and zero relative
+          # README link targets found. Alongside them: two ways a single
+          # name or reference can be silently DROPPED rather than flagged —
+          # check 3's self-exclusion (a name mentioned only inside its own
+          # defining file must still count as unreferenced, or the check
+          # falsifies its own point) and the leading-`/` strip (an
+          # unresolved `/phantom-skill` reference must surface as
+          # `phantom-skill` in the failure message, not vanish past check
+          # 2's shape re-validation). Verified against mutants with each
+          # mechanism removed: the real script fails, the mutant reports
+          # clean.
+          fx="$RUNNER_TEMP/ref-fixture-floors"
+
+          build_good() {
+            rm -rf "$fx"; mkdir -p "$fx/agents" "$fx/skills/demo-skill"
+            printf -- '---\nname: demo-critic\n---\nbody\n' > "$fx/agents/demo-critic.md"
+            printf -- '---\nname: demo-skill\n---\nbody\n' > "$fx/skills/demo-skill/SKILL.md"
+            printf '# R\n\n[c](./agents/demo-critic.md) `demo-critic` `demo-skill`\n' > "$fx/README.md"
+            printf 'The `demo-critic` agent and the `demo-skill` skill.\n' > "$fx/CLAUDE.md"
+          }
+
+          expect_fail() { # $1 = message substring, $2 = label
+            if out=$(REF_CHECK_ALLOW_UNTRACKED=1 sh scripts/ref-check.sh "$fx" 2>&1); then
+              echo "::error::$2: checker reported clean but should have failed"; exit 1
+            fi
+            printf '%s\n' "$out" | grep -qF "$1" || {
+              echo "::error::$2: expected message not found: $1"
+              printf '%s\n' "$out"; exit 1
+            }
+            echo "  ok — $2"
+          }
+
+          # floor — zero backtick tokens extracted at all
+          build_good
+          printf 'No backtick tokens here at all, plain prose only.\n' > "$fx/CLAUDE.md"
+          expect_fail 'zero backtick tokens extracted' 'floor (zero backtick tokens)'
+
+          # floor — tokens exist but none survive Rule A/B classification
+          build_good
+          printf 'See `foo` and `bar` do their thing, no role words nearby.\n' > "$fx/CLAUDE.md"
+          expect_fail 'zero Rule-A/B-selected tokens' 'floor (zero classified tokens)'
+
+          # floor — README has links, but none are relative
+          build_good
+          printf '# R\n\n[ext](https://example.com) [anchor](#top)\n' > "$fx/README.md"
+          expect_fail 'zero relative link targets' 'floor (zero README link targets)'
+
+          # check 3 — a name mentioned ONLY inside its own defining file
+          build_good
+          printf -- '---\nname: demo-skill\n---\nSelf mention of the `demo-skill` skill here in its own body.\n' > "$fx/skills/demo-skill/SKILL.md"
+          printf 'The `demo-critic` agent only, no mention of the skill.\n' > "$fx/CLAUDE.md"
+          printf '# R\n\n[c](./agents/demo-critic.md) `demo-critic`\n' > "$fx/README.md"
+          expect_fail 'is never referenced' 'check 3 (self-mention does not count)'
+
+          # check 2 — a dangling `/`-prefixed reference must resolve to the
+          # STRIPPED name in the message, not silently vanish
+          build_good
+          printf 'The `demo-critic` agent, `demo-skill` skill, and the `/phantom-skill` skill.\n' > "$fx/CLAUDE.md"
+          expect_fail 'unresolved reference `phantom-skill`' 'check 2 (leading-slash strip)'
+      - name: Prove the skills arm of check 1 catches what the agents arm catches
+        run: |
+          # check 1 runs twice — once per agents/*.md against its filename,
+          # once per skills/*/SKILL.md against its DIRECTORY name — and
+          # every fixture above only ever breaks the agents arm.
+          fx="$RUNNER_TEMP/ref-fixture-skills-check1"
+
+          build_good() {
+            rm -rf "$fx"; mkdir -p "$fx/agents" "$fx/skills/demo-skill"
+            printf -- '---\nname: demo-critic\n---\nbody\n' > "$fx/agents/demo-critic.md"
+            printf -- '---\nname: demo-skill\n---\nbody\n' > "$fx/skills/demo-skill/SKILL.md"
+            printf '# R\n\n[c](./agents/demo-critic.md) `demo-critic` `demo-skill`\n' > "$fx/README.md"
+            printf 'The `demo-critic` agent and the `demo-skill` skill.\n' > "$fx/CLAUDE.md"
+          }
+
+          expect_fail() { # $1 = message substring, $2 = label
+            if out=$(REF_CHECK_ALLOW_UNTRACKED=1 sh scripts/ref-check.sh "$fx" 2>&1); then
+              echo "::error::$2: checker reported clean but should have failed"; exit 1
+            fi
+            printf '%s\n' "$out" | grep -qF "$1" || {
+              echo "::error::$2: expected message not found: $1"
+              printf '%s\n' "$out"; exit 1
+            }
+            echo "  ok — $2"
+          }
+
+          build_good
+          printf -- '---\nname: wrong-skill-name\n---\nbody\n' > "$fx/skills/demo-skill/SKILL.md"
+          expect_fail 'does not match directory name' 'check 1 skills arm (name vs directory)'
+
+          build_good
+          printf -- '---\nname:\n---\nbody\n' > "$fx/skills/demo-skill/SKILL.md"
+          expect_fail 'has no (or empty) frontmatter' 'check 1 skills arm (empty name)'
+      - name: Prove the git ls-files branch reads tracked files only
+        run: |
+          # Every fixture above is a plain (non-git) tree, so only the glob
+          # fallback gets exercised by a controlled fixture — the git
+          # ls-files branch otherwise runs only against this very checkout,
+          # which never has a stray untracked agents/*.md lying around to
+          # prove the filter with. `git init` + `git add` (no commit — a
+          # stock runner has no configured identity, and none is needed:
+          # `git ls-files` reads the INDEX, which `add` alone populates)
+          # builds a fixture that takes the git branch on purpose.
+          gx="$RUNNER_TEMP/ref-fixture-git"
+          rm -rf "$gx"; mkdir -p "$gx/agents" "$gx/skills/demo-skill"
+          printf -- '---\nname: demo-critic\n---\nbody\n' > "$gx/agents/demo-critic.md"
+          printf -- '---\nname: demo-skill\n---\nbody\n' > "$gx/skills/demo-skill/SKILL.md"
+          printf '# R\n\n[c](./agents/demo-critic.md) `demo-critic` `demo-skill`\n' > "$gx/README.md"
+          printf 'The `demo-critic` agent and the `demo-skill` skill.\n' > "$gx/CLAUDE.md"
+          ( cd "$gx" && git init -q && git add -A ) >/dev/null 2>&1
+
+          # an UNTRACKED file with frontmatter that would fail check 1 if
+          # read — proves the git branch enumerates the index, not the disk
+          printf -- '---\nname: totally-broken-name\n---\nbody\n' > "$gx/agents/leaked-secret.md"
+
+          if ! out=$(sh scripts/ref-check.sh "$gx" 2>&1); then
+            echo "::error::git-tracked fixture failed — the untracked stray file leaked into the check:"
+            printf '%s\n' "$out"
+            exit 1
+          fi
+          printf '%s\n' "$out" | grep -qF 'ref-check: clean' || {
+            echo "::error::git-tracked fixture did not print the clean line"
+            printf '%s\n' "$out"; exit 1
+          }
+          echo "  ok — untracked stray file is invisible to the git ls-files branch"
+      - name: Prove frontmatter and extraction edge cases survive parsing
+        run: |
+          # BOM strip, quoted-name strip, and fence handling are all
+          # "silent success" risks: a fixture that never actually exercises
+          # the feature ALSO prints clean. Each positive case below pairs a
+          # phantom reference that would only surface if the feature were
+          # broken (verified against mutants with each mechanism removed —
+          # real script clean, mutant fails), plus two negative cases with
+          # distinct messages.
+          fx="$RUNNER_TEMP/ref-fixture-parsing"
+
+          build_good() {
+            rm -rf "$fx"; mkdir -p "$fx/agents" "$fx/skills/demo-skill"
+            printf -- '---\nname: demo-critic\n---\nbody\n' > "$fx/agents/demo-critic.md"
+            printf -- '---\nname: demo-skill\n---\nbody\n' > "$fx/skills/demo-skill/SKILL.md"
+            printf '# R\n\n[c](./agents/demo-critic.md) `demo-critic` `demo-skill`\n' > "$fx/README.md"
+            printf 'The `demo-critic` agent and the `demo-skill` skill.\n' > "$fx/CLAUDE.md"
+          }
+
+          expect_clean() { # $1 = label
+            if ! out=$(REF_CHECK_ALLOW_UNTRACKED=1 sh scripts/ref-check.sh "$fx" 2>&1); then
+              echo "::error::$1: expected clean but checker failed:"; printf '%s\n' "$out"; exit 1
+            fi
+            printf '%s\n' "$out" | grep -qF 'ref-check: clean' || {
+              echo "::error::$1: did not print the clean line"; printf '%s\n' "$out"; exit 1
+            }
+            echo "  ok — $1"
+          }
+
+          # BOM: a leading UTF-8 BOM on a frontmatter file must not defeat
+          # the "line 1 is ---" guard
+          build_good
+          bom=$(printf '\357\273\277')
+          printf '%s---\nname: demo-critic\n---\nbody\n' "$bom" > "$fx/agents/demo-critic.md"
+          expect_clean 'BOM-prefixed frontmatter still parses'
+
+          # quoted name: name: "demo-critic" must strip to demo-critic, not
+          # fail shape validation on the quote marks themselves
+          build_good
+          printf -- '---\nname: "demo-critic"\n---\nbody\n' > "$fx/agents/demo-critic.md"
+          expect_clean 'quoted frontmatter name strips correctly'
+
+          # a ~~~ fence and an indented ``` fence must both suppress the
+          # backtick tokens inside them
+          build_good
+          printf 'The `demo-critic` agent and the `demo-skill` skill.\n\n~~~\nSee `phantom-agent` agent, not real, inside a tilde fence.\n~~~\n\n    ```\n    Also `ghost-skill` skill inside an indented backtick fence.\n    ```\n' > "$fx/CLAUDE.md"
+          expect_clean '~~~ and indented ``` fences both suppress their contents'
+
+          # an unclosed fence must fail loudly, not silently swallow the
+          # rest of the file
+          build_good
+          printf 'The `demo-critic` agent and the `demo-skill` skill.\n\n```\nunclosed fence never ends\n' > "$fx/CLAUDE.md"
+          if out=$(REF_CHECK_ALLOW_UNTRACKED=1 sh scripts/ref-check.sh "$fx" 2>&1); then
+            echo "::error::unclosed fence: checker reported clean but should have failed"; exit 1
+          fi
+          printf '%s\n' "$out" | grep -qF 'unclosed fenced code block' || {
+            echo "::error::unclosed fence: expected message not found"; printf '%s\n' "$out"; exit 1
+          }
+          echo "  ok — unclosed fence"
+
+          # an invalid-shape name must be rejected AND never echoed back —
+          # the header promises the value itself never appears in output
+          build_good
+          printf -- '---\nname: XSENTINEL_INVALID_SHAPE_VALUE\n---\nbody\n' > "$fx/agents/demo-critic.md"
+          if out=$(REF_CHECK_ALLOW_UNTRACKED=1 sh scripts/ref-check.sh "$fx" 2>&1); then
+            echo "::error::invalid name shape: checker reported clean but should have failed"; exit 1
+          fi
+          printf '%s\n' "$out" | grep -qF 'has an invalid shape' || {
+            echo "::error::invalid name shape: expected message not found"; printf '%s\n' "$out"; exit 1
+          }
+          if printf '%s\n' "$out" | grep -qF 'XSENTINEL_INVALID_SHAPE_VALUE'; then
+            echo "::error::invalid name shape: the rejected value was echoed into output — leak risk"
+            exit 1
+          fi
+          echo "  ok — invalid name shape rejected and never echoed"
+      - name: Prove README link-target edge cases
+        run: |
+          fx="$RUNNER_TEMP/ref-fixture-links"
+
+          build_good() {
+            rm -rf "$fx"; mkdir -p "$fx/agents" "$fx/skills/demo-skill"
+            printf -- '---\nname: demo-critic\n---\nbody\n' > "$fx/agents/demo-critic.md"
+            printf -- '---\nname: demo-skill\n---\nbody\n' > "$fx/skills/demo-skill/SKILL.md"
+            printf '# R\n\n[c](./agents/demo-critic.md) `demo-critic` `demo-skill`\n' > "$fx/README.md"
+            printf 'The `demo-critic` agent and the `demo-skill` skill.\n' > "$fx/CLAUDE.md"
+          }
+
+          expect_fail() { # $1 = message substring, $2 = label
+            if out=$(REF_CHECK_ALLOW_UNTRACKED=1 sh scripts/ref-check.sh "$fx" 2>&1); then
+              echo "::error::$2: checker reported clean but should have failed"; exit 1
+            fi
+            printf '%s\n' "$out" | grep -qF "$1" || {
+              echo "::error::$2: expected message not found: $1"
+              printf '%s\n' "$out"; exit 1
+            }
+            echo "  ok — $2"
+          }
+
+          # an absolute link target is rejected outright, distinctly from
+          # "does not exist"
+          build_good
+          printf '# R\n\n[c](./agents/demo-critic.md) [abs](/etc/passwd) `demo-critic` `demo-skill`\n' > "$fx/README.md"
+          expect_fail 'is absolute' 'check 4 (absolute link target)'
+
+          # a target containing a `..` path component is likewise rejected
+          # outright
+          build_good
+          printf '# R\n\n[c](./agents/demo-critic.md) [dd](../outside.md) `demo-critic` `demo-skill`\n' > "$fx/README.md"
+          expect_fail 'contains a `..` path component' 'check 4 (.. path component)'
+
+          # README.md missing entirely
+          build_good
+          rm -f "$fx/README.md"
+          expect_fail 'README.md not found at repo root' 'check 4 (missing README.md)'
+      - name: Prove root-resolution edge cases
+        run: |
+          # A non-directory root, and no root argument outside a git repo
+          # entirely — neither needs REF_CHECK_ALLOW_UNTRACKED, since both
+          # fail before that gate is even reached. $RUNNER_TEMP is a
+          # sibling of the checkout, not nested inside it, and has no git
+          # repo anywhere in its ancestor chain, so the second case is
+          # deterministic on a standard GitHub-hosted runner.
+          # Note the `if`: GitHub runs steps as `bash -e`, so a bare
+          # `out=$(failing-cmd)` aborts the step before the next line runs.
+          # Every negative assertion here must keep the substitution inside an
+          # `if`/`||` for that reason.
+          if out=$(sh scripts/ref-check.sh "$RUNNER_TEMP/ref-does-not-exist-xyz" 2>&1); then
+            echo "::error::non-existent root: checker reported clean but should have failed"; exit 1
+          fi
+          printf '%s\n' "$out" | grep -qF 'is not a directory' || {
+            echo "::error::non-existent root: expected message not found"; printf '%s\n' "$out"; exit 1
+          }
+          echo "  ok — non-directory root rejected"
+
+          nogit="$RUNNER_TEMP/ref-no-git-dir"
+          rm -rf "$nogit"; mkdir -p "$nogit"
+          script_abs="$PWD/scripts/ref-check.sh"
+          if out=$(cd "$nogit" && sh "$script_abs" 2>&1); then
+            echo "::error::no root outside a git repo: checker reported clean but should have failed"; exit 1
+          fi
+          printf '%s\n' "$out" | grep -qF 'not inside a git repo' || {
+            echo "::error::no root outside a git repo: expected message not found"; printf '%s\n' "$out"; exit 1
+          }
+          echo "  ok — no root argument outside a git repo rejected"
 
   psscriptanalyzer:
     name: PSScriptAnalyzer

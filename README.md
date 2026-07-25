@@ -18,7 +18,7 @@ Copy what's useful.
 | [`agents/`](./agents/) | [Subagents](https://docs.claude.com/en/docs/claude-code/sub-agents): the adversarial [`security-critic`](./agents/security-critic.md) and [`architecture-critic`](./agents/architecture-critic.md) (read-oriented tools, findings-only output), an [`implementer`](./agents/implementer.md) that builds strictly from the approved plan (no web/research tools), a [`test-runner`](./agents/test-runner.md) specialist, and an [`Explore`](./agents/explore.md) override pinned to the fast tier. (If your Claude Code version doesn't let a user agent shadow the built-in name, note that the usual workaround — `CLAUDE_CODE_SUBAGENT_MODEL` — is **not** an Explore-only lever: it outranks every subagent's `model:` frontmatter, so it would silently drop the two `opus`-pinned critics onto the fast tier too. Prefer the override file.) |
 | [`settings.json`](./settings.json) | Mostly permission hygiene: blocks the **Read tool** from secret paths (`.env*`, `secrets/`, `*.pem`/`*.key`, `~/.ssh`, `~/.aws`), denies the common force-push forms, asks before **every** push, allow-lists routine git commands. Plus one advisory behavioural default — `workflowSizeGuideline: small`, which asks Claude to aim under 5 agents in any *dynamic workflow* it writes. That is a different mechanism from this repo's own subagents, which it does not touch — and it is advice, not a cap. Setting it from a settings file needs ≥ 2.1.219 (`/config` has offered it since 2.1.202). If you merge this file by hand, merge the `permissions` block first and independently: it is the part that is load-bearing. And note the direction the installer's symlink runs — once linked, upstream changes to this file land in your live config on `git pull`, so `cp -L` it to a real file if you want to gate that. |
 | [`.claude-plugin/`](./.claude-plugin/plugin.json) | Plugin manifest, so the skills + agents can also be installed as a namespaced [plugin](https://docs.claude.com/en/docs/claude-code/plugins). |
-| [`scripts/`](./scripts/) | The leak guard and [`run-stats.sh`](./scripts/run-stats.sh), the run-stats aggregator. **Not** symlinked by the installer — run these from the clone. |
+| [`scripts/`](./scripts/) | The leak guard, [`run-stats.sh`](./scripts/run-stats.sh) (the run-stats aggregator), and [`ref-check.sh`](./scripts/ref-check.sh), which asserts the docs and the `agents/`+`skills/` tree still name each other correctly. **Not** symlinked by the installer — run these from the clone. |
 | [`install.sh`](./install.sh) / [`install.ps1`](./install.ps1) | Symlink the above into `~/.claude`. Idempotent; backs up anything it would overwrite. |
 
 ## The workflow, in one screen
@@ -27,9 +27,9 @@ Copy what's useful.
 Commit per item**, with the model tier matched to each phase and the rigor
 matched to the risk.
 
-- **Orient first.** Recall project memory and map the affected subsystem with
-  cheap fast-tier agents before planning — a wrong mental model poisons
-  everything downstream.
+- **Orient first.** Recall project memory in the main session — subagents don't
+  inherit it — then map the affected subsystem with cheap fast-tier agents,
+  before planning: a wrong mental model poisons everything downstream.
 - **Adversarial planning.** Draft on the strongest model, then ≥3 parallel
   critics who read the *actual repo*, not just the plan text. **Security and
   architecture are mandatory angles on every plan**; further angles fit the
@@ -59,7 +59,8 @@ flowchart TD
     Gear -->|"feature / refactor /<br/>security-sensitive"| Orient
 
     subgraph P1["Phase 1 — Plan"]
-        Orient["Orient — recall memories,<br/>map the subsystem"]:::fast --> Draft["Draft the plan"]:::frontier
+        Orient["Recall memories —<br/>main session, not a subagent"]:::frontier --> Map["Map the subsystem"]:::fast
+        Map --> Draft["Draft the plan"]:::frontier
         Draft --> Panel["Adversarial panel — at least 3 agents<br/>reading the real repo"]
         Panel --> Sec["Security<br/>(mandatory)"]
         Panel --> Arch["Architecture<br/>(mandatory)"]
@@ -275,6 +276,56 @@ Plan files land in the worked-on project's `docs/plans/`. *This* repo gitignores
 writing a plan file there — those files record which findings you consciously
 rejected, which is not something to push to a shared remote by accident.
 
+## Memory: the built-in mechanism
+
+Everything in this paragraph is a harness fact, checked against Claude Code
+2.1.220 — it rots on a platform schedule, like the assumptions above.
+Claude Code ships a built-in **auto memory** mechanism, on by default
+(`autoMemoryEnabled`, default `true`) — this workflow builds on it rather than
+inventing a parallel one. It writes to `~/.claude/projects/<project>/memory/`:
+a `MEMORY.md` index plus topic files. The `<project>` path is derived from the
+git repository, so all worktrees and subdirectories within the same repo
+share one auto memory directory. Only the first 200 lines of `MEMORY.md`, or
+the first 25KB, whichever comes first, load at session start; topic files
+load on demand. So `MEMORY.md` has to stay an index — one line per entry —
+with detail pushed out into topic files, or the load budget burns on the
+index itself. Auto memory is also machine-local: files aren't shared across
+machines or cloud environments. And it sits outside any repo tree **by
+default** — under `~/.claude/`, not this one — though `autoMemoryDirectory`
+can relocate it from any settings scope (project scope only after the
+workspace trust dialog). Pointing that knob into a repo tree is the one easy
+way to put private notes under version control, so don't; if you must,
+gitignore the target first.
+
+**The entry format is three fields, nothing longer:** **decision**, **why**
+(the reasoning that would otherwise be lost), and **the trap it avoids** (what
+goes wrong for someone who doesn't know this). That's the required **body
+content of an auto-memory file**, not a competing file format — the harness
+already writes these files with YAML frontmatter, and a rival format here
+would be exactly the drift this section exists to prevent.
+
+**The most valuable fact about the mechanism is a constraint, not a feature:**
+the main conversation's auto memory isn't loaded into subagents — the one
+exception is a fork. So recall is a **main-session action** — the `Explore`
+subagent that maps the codebase cannot do it for you. That's why
+[`plan-gates`](./skills/plan-gates/SKILL.md)'s *orient* step recalls *before*
+it hands the codebase map to `Explore`, rather than folding the two together:
+the order is load-bearing, not incidental.
+
+**Privacy split.** Project- or employer-specific material belongs on the
+`~/.claude/CLAUDE.local.md` side of that boundary, never in a tracked tree —
+public or client-private. Worth naming explicitly: a subagent's `memory:`
+frontmatter field with scope `project` writes to `.claude/agent-memory/<agent>/`
+— *inside* the repo. This workflow doesn't use that field. If you ever enable
+it, add `/.claude/` to that project's `.gitignore` first, the same way you'd
+add `/docs/` before writing a plan file there.
+
+What's actually worth writing down, and what isn't, lives in exactly one
+place — the *Capture what you learned* step of
+[`plan-gates`](./skills/plan-gates/SKILL.md) — rather than restated here, the
+same way "Measuring the workflow" above points at
+`scripts/run-stats.example.md` instead of duplicating its key list.
+
 ## Install
 
 ```bash
@@ -365,6 +416,38 @@ a per-project addition. Ask
 Claude to write one where it fits: *"add a Stop hook that runs `npm test` and
 blocks until green."*
 
+A related question: could `sandbox.network.strictAllowlist` — "deny
+non-allowlisted hosts for sandboxed commands without prompting," per the
+v2.1.219 CHANGELOG (its only description anywhere checked; it's absent from
+the settings reference's sandbox table, 30 keys checked, and from the
+sandboxing page) — enforce [`implementer`](./agents/implementer.md)'s "no
+web/research tools" constraint instead of leaving half of it
+instruction-held? No, for two decisive reasons. It can't target one agent:
+subagents "run in the same process as the parent session and use the same
+sandbox configuration," and no subagent frontmatter field names a sandbox
+or a network scope — the setting is session-wide or nothing, which would
+also gate the main session's `git fetch`/`gh` and `test-runner`'s
+`npm install`/`mvn`. And it's inert where this repo is maintained: the
+sandbox "runs on macOS, Linux, and WSL2" — not native Windows — and
+`failIfUnavailable` defaults to `false`, so on that platform it would warn
+and run unsandboxed. A rule that looks enforced and isn't is worse than the
+honest limit stated here.
+
+The constraint isn't purely instruction-held to begin with: `implementer`'s
+`tools:` allowlist (`Read, Edit, Write, Bash, Grep, Glob`) already denies
+`WebFetch`/`WebSearch` deterministically, no sandbox involved. Only the
+Bash-shelled half — `curl`, `wget`, `npm install`, `gh` — rests on the
+prompt. Two deterministic levers exist for that half too, and both are
+declined rather than absent: a `permissions.deny` rule such as
+`Bash(curl:*)` / `Bash(wget:*)`, and a per-subagent `hooks:` field. Declined
+because the first is session-wide like `strictAllowlist`, and either would
+change what the workflow does, not just how this one constraint is held. The
+obvious third candidate isn't one: `disallowedTools` *is* per-subagent, but it
+takes tool names (and MCP server patterns), not permission-rule syntax — it can
+deny `Bash` outright, which would take the implementer's build and test
+capability with it, and it cannot express "Bash, but no egress."
+Nothing here goes into `settings.json`.
+
 ## Making your own skill
 
 Copy [`skills/example-skill`](./skills/example-skill/SKILL.md) — it documents the
@@ -385,10 +468,20 @@ CI runs `shellcheck` on the shell scripts, PSScriptAnalyzer on the PowerShell
 installer, a **smoke test** that parses
 [`scripts/run-stats.example.md`](./scripts/run-stats.example.md) with
 `run-stats.sh` — so the format doc and the parser can't drift apart silently —
-and a **leak guard**: the build fails if any blocklisted private string lands in
-the tree. The blocklist itself lives *outside* the repo (as the
+a **reference check** ([`ref-check.sh`](./scripts/ref-check.sh)) that fails the
+build when the docs and the agent/skill tree stop agreeing — a renamed or
+deleted agent leaves either a dangling mention or a definition nothing points
+at, and neither used to fail anything — and a **leak guard**: the build fails if
+any blocklisted private string lands in the tree. The blocklist itself lives *outside* the repo (as the
 `LEAK_BLOCKLIST` GitHub Actions secret — one regex per line) precisely so the
 repo never has to name the things it must not contain.
+
+The reference check gets its own guard, because a checker that quietly matches
+nothing exits 0 forever and reads as green. Its CI job carries one deliberately
+broken fixture per check, and asserts the *message* each one produces rather
+than just a non-zero exit — asserting the exit code alone was measured to let
+three of the four checks be deleted with the job still passing. The same
+measurement killed an earlier CRLF fixture that turned out to be tautological.
 
 ## License
 
