@@ -29,34 +29,53 @@ reasoning transcripts**.
    the frontier tier — do not downgrade mid-plan.
 3. **Adversarial panel — at least 3 critics, in parallel** (single message,
    one `Agent` call each). Two are mandatory and predefined:
-   - **`security-critic`** — always runs; returns severity/where/risk/fix
-     findings, or "n/a — reason" when there's genuinely no security surface.
-   - **`architecture-critic`** — always runs; returns concern/where/blast
-     radius/alternative findings.
+   - **`security-critic`** — always runs.
+   - **`architecture-critic`** — always runs.
+
+   Both return the schema defined in their own agent file, or "n/a — reason".
+   Those files are the single source of truth for the fields; don't restate
+   them here, or they go stale on the next schema change.
 
    Add **one or more task-fit critics** (correctness/edge-case auditor,
    simplicity critic, integration reviewer, performance, …) as
    `general-purpose` agents. Per Anthropic's delegation guidance, give each
    one a distinct objective, its **own output schema**, and clear task
-   boundaries — otherwise critics duplicate work and leave gaps. Every critic
-   gets the full plan **and** repo access: reviewers must read the real code,
-   so they catch "the plan assumes X but the code does Y."
+   boundaries — otherwise critics duplicate work and leave gaps. That schema
+   **must include `model`, `severity` and `confidence`**, so step 4's triage
+   rule binds the whole panel and not just the two predefined critics. Spawn
+   them **read-only** (deny `Write`, `Edit`, and the spawn tool): a review step
+   must not be able to edit the code it is reviewing. Every critic gets the
+   full plan **and** repo access: reviewers must read the real code, so they
+   catch "the plan assumes X but the code does Y."
 4. **Reconcile critiques into a final plan.** Where critics disagree, surface
    the disagreement and pick a side, briefly stating the deciding factor — do
-   not paper over conflicts.
+   not paper over conflicts. Triaging low-value findings out is the session's
+   job, not the critics' — but it is non-discretionary for the severe tail:
+   any `critical`/`high` finding is actioned or recorded in **Agent critiques
+   considered** with a written rejection reason, regardless of confidence.
+   Quote the critic's own `severity`/`confidence` verbatim when you record it —
+   you may **not** re-grade to duck the rule; if you disagree, keep the tag and
+   record the disagreement. A finding from a built-in that emits no severity
+   (`/code-review`, `/security-review`) counts as `high` until you grade it
+   explicitly and record the grade. `medium`/`low` may be dropped without
+   individual reasons, but **record how many** in the run-stats block
+   (`findings_*_dropped`) — an unmeasured drop bucket makes the rejection-rate
+   stat read as a whole-panel number when it only ever saw the severe tail.
 5. **Write the plan file** to `docs/plans/YYYY-MM-DD-<slug>.md` (date from
    `currentDate`, not a guess), containing: **Goal**, **Approach**,
    **File-level changes** (a concrete checklist), **Risks & open questions**,
-   and **Agent critiques considered** — what each critic raised and how the
-   plan addresses or consciously rejects it.
+   **Agent critiques considered** — what each critic raised and how the plan
+   addresses or consciously rejects it — and, appended at Gate 2,
+   **Agent critiques considered — diff stage**: same format, separate corpus,
+   sub-headed per plan-item and pass (`### <item> · pass N`) so the two stages
+   and the fix-loop iterations stay countable apart.
 6. **Stop for approval.** No production code until the user says "looks
    good" / "ship it" / "go ahead" or similar.
 
 ## Phase 2 — Implement → Gate → Commit
 
 Models switch automatically per phase: the main session stays frontier
-(orchestrator/verifier); implementation and testing run on spawned agents, and
-each report says which model ran the work.
+(orchestrator/verifier); implementation and testing run on spawned agents.
 
 1. **Optionally drive with `/goal`** (built-in, v2.1.139+; the user types it —
    hand them the line to paste). Its evaluator is a fast model that doesn't
@@ -81,7 +100,11 @@ each report says which model ran the work.
    (the built-in `/security-review` also fits security-sensitive diffs).
    Weight this gate
    at least as heavily as the plan review; it's where most real defects are
-   caught.
+   caught. Triage per Phase 1 step 4, recording into **Agent critiques
+   considered — diff stage**. Each critic's `model:` line is self-reported, not
+   attestation: cross-check it against that agent's frontmatter pin, and if a
+   review came back on a fallback model, re-run `/model` and re-run the critic
+   before the gate can pass.
 5. **Gate 3 · Dedicated test pass — always.** Hand off to the `test-runner`
    subagent (or the `/test` skill): run the full suite, cover every
    change-surface item, regression test per bug fixed, report the change's

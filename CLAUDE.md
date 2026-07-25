@@ -68,8 +68,9 @@ gears exist.
 - **Implementing → mid-tier `implementer` agents**, fanned out per cohesive unit.
 - **Testing → `test-runner` subagent or the `/test` skill** (mid tier).
 
-Mechanics: models can only be set on spawned agents — the main session stays
-on the frontier tier, and each report says which model ran the work.
+Mechanics: models can only be set on spawned agents — the main session stays on
+the frontier tier, and every spawned agent opens its report with a `model:`
+line (`Explore` excepted: it never receives this file).
 
 ## Local, private overrides (optional)
 
