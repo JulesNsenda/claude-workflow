@@ -21,11 +21,12 @@ and a clone reads the tag.
 - [`scripts/version-check.sh`](./scripts/version-check.sh) and a `version-guard`
   CI job: the git tag and the `version` field in
   [`.claude-plugin/plugin.json`](./.claude-plugin/plugin.json) have to agree, and
-  now something checks it rather than it being a convention. CI gained a `v*`
-  tag trigger so the check fires on the tag itself; the job's fixtures run on
-  every push regardless, so the script can't sit unexercised between releases.
+  now something checks it rather than it being a convention. CI gained a tag
+  trigger so the check fires on the tag itself; the job's fixtures run on every
+  push regardless, so the script can't sit unexercised between releases.
   Detective rather than preventive by design — see
-  [Releases](./README.md#releases) for the ordering that makes that safe.
+  [Releases](./README.md#releases) for the ordering that makes that safe, and
+  for the one carrier (this file) that is deliberately still unguarded.
 
 ## [1.0.0] - 2026-07-25
 
@@ -79,6 +80,7 @@ earlier release to upgrade from.
 
 Landed as pull requests [#1], [#2], [#3], and [#4].
 
+[Unreleased]: https://github.com/JulesNsenda/claude-workflow/compare/v1.0.0...HEAD
 [1.0.0]: https://github.com/JulesNsenda/claude-workflow/releases/tag/v1.0.0
 [#1]: https://github.com/JulesNsenda/claude-workflow/pull/1
 [#2]: https://github.com/JulesNsenda/claude-workflow/pull/2

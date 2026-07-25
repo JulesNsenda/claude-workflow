@@ -3,10 +3,23 @@ name: CI
 on:
   push:
     branches: [main]
-    # Release tags, so version-guard's real check can fire on the tag itself.
-    # Without this the job would only ever run its own fixtures and never see
-    # a live tag.
-    tags: ['v*']
+    # Tags, so version-guard's real check can fire on the tag itself; without
+    # this the job would only ever run its own fixtures and never see a live
+    # tag.
+    #
+    # Deliberately '*' and not 'v*'. The filter is the real gate on which tags
+    # get checked, and a 'v*' filter means `git tag 1.1.0` runs NO workflow at
+    # all — the guard silently absent at exactly the moment it exists for, with
+    # no red build to show it. Matching every tag lets version-check.sh's own
+    # shape check reject a non-`v` tag loudly instead.
+    #
+    # NOTE: every job in this file now also runs on tag pushes, against the
+    # detached HEAD `actions/checkout` produces. All six are ref-agnostic today
+    # (ref-check.sh reads the git index; the leak blocklist secret is available
+    # on same-repo tag pushes). Anything added later that assumes a branch —
+    # `github.ref_name` used as a branch name, a docs deploy, a `contents:
+    # write` step — must account for that.
+    tags: ['*']
   pull_request:
 
 permissions:
@@ -569,7 +582,7 @@ jobs:
           expect_fail 'refs/tags/v1.2.3' "$fx/good.json" 'looks like a full git ref' 'full ref passed instead of ref_name'
 
           expect_fail '1.2.3' "$fx/good.json" 'has an invalid shape' 'tag missing its v prefix'
-          expect_fail 'v1.2.3' "$fx/absent.json" 'not found' 'missing manifest'
+          expect_fail 'v1.2.3' "$fx/absent.json" 'not found (run from the repo root' 'missing manifest'
 
           printf '{\n  "name": "x"\n}\n' > "$fx/nokey.json"
           expect_fail 'v1.2.3' "$fx/nokey.json" 'has no "version" key' 'floor (no version key)'
@@ -577,21 +590,75 @@ jobs:
           printf '{\n  "version": "1.2.3",\n  "dep": { "version": "9.9.9" }\n}\n' > "$fx/twokeys.json"
           expect_fail 'v1.2.3' "$fx/twokeys.json" 'ambiguous, refusing to guess' 'floor (ambiguous version keys)'
 
+          # THE REGRESSION. Same two keys, ONE line — which is what any reflow
+          # (`jq -c`, a formatter) produces. Counting matching LINES instead of
+          # occurrences made this a silent false clean: `v9.9.9` passed while the
+          # top-level version was 1.2.3, and the correct `v1.2.3` was rejected.
+          # Both directions are asserted, because the version that fails on the
+          # right tag is only half the symptom.
+          printf '{"name":"x","version":"1.2.3","dep":{"version":"9.9.9"}}\n' > "$fx/oneline.json"
+          expect_fail 'v9.9.9' "$fx/oneline.json" 'ambiguous, refusing to guess' 'regression (single-line nested version, wrong tag)'
+          expect_fail 'v1.2.3' "$fx/oneline.json" 'ambiguous, refusing to guess' 'regression (single-line nested version, right tag)'
+
           printf '{\n  "version": 123\n}\n' > "$fx/unquoted.json"
           expect_fail 'v1.2.3' "$fx/unquoted.json" 'could not extract its value' 'floor (unparseable value)'
 
           printf '{\n  "version": "not-a-version"\n}\n' > "$fx/junk.json"
           expect_fail 'v1.2.3' "$fx/junk.json" 'version has an invalid shape' 'manifest value rejected on shape'
+
+          # The arity guard exits 2, not 1, so expect_fail's helpers would read
+          # it as an ordinary failure — assert it on its own terms.
+          for args in '' 'a b c'; do
+            # shellcheck disable=SC2086 # deliberate word splitting: '' means no args
+            if out=$(sh scripts/version-check.sh $args 2>&1); then
+              echo "::error::arity guard: reported clean with [$args]"; exit 1
+            fi
+            printf '%s\n' "$out" | grep -qF 'usage: version-check.sh' || {
+              echo "::error::arity guard: no usage message with [$args]"; printf '%s\n' "$out"; exit 1
+            }
+          done
+          echo "  ok — wrong argument count prints usage"
+      - name: The real manifest must stay parseable on every push
+        # The default-manifest path is the ONLY path the real check uses, and
+        # every fixture above passes an explicit manifest argument — so without
+        # this step, default-path resolution and extraction against the real
+        # .claude-plugin/plugin.json would first be exercised at release time,
+        # where recovery means deleting a pushed tag.
+        #
+        # Non-tautological, and it never needs updating when the version is
+        # bumped: v0.0.0 must NOT match, and it can only reach the comparison at
+        # all if the default path resolved and extraction worked. Rename or
+        # break the manifest's `version` key and the message becomes a floor
+        # message instead, failing here at PR time.
+        run: |
+          if out=$(sh scripts/version-check.sh v0.0.0 2>&1); then
+            echo "::error::v0.0.0 matched the real manifest — that cannot be right"; exit 1
+          fi
+          printf '%s\n' "$out" | grep -qF 'expected tag `v' || {
+            echo "::error::the real manifest never reached the comparison — default-path resolution or extraction is broken"
+            printf '%s\n' "$out"; exit 1
+          }
+          echo "  ok — the real manifest resolves and parses"
       - name: The real tag must agree with the real manifest
-        # Only meaningful on a tag push; on branches and PRs there is no tag to
-        # check and the fixtures above are the whole job.
-        if: startsWith(github.ref, 'refs/tags/')
-        env:
-          # Via env, not inlined into the script body: a `${{ }}` expansion
-          # inside `run:` is substituted as text before the shell sees it, so a
-          # crafted tag name would be executed rather than compared.
-          TAG: ${{ github.ref_name }}
-        run: sh scripts/version-check.sh "$TAG"
+        # No step-level `if:`. A wrong condition there makes this a grey no-op
+        # while the job still reads green — the "quietly matches nothing exits 0
+        # forever" failure, relocated from the script into CI config where no
+        # fixture can reach it. Branching inside the body means the step always
+        # runs and logs why it did nothing.
+        #
+        # $GITHUB_REF_NAME is the bare tag (v1.0.0); $GITHUB_REF is the full ref
+        # (refs/tags/v1.0.0). Using the built-in env vars rather than a `${{ }}`
+        # expansion also keeps the tag name out of the text substituted into the
+        # script body before the shell sees it.
+        run: |
+          case "$GITHUB_REF" in
+            refs/tags/*)
+              sh scripts/version-check.sh "$GITHUB_REF_NAME"
+              ;;
+            *)
+              echo "  not a tag push ($GITHUB_REF) — the real check is not applicable; the fixtures above are this job"
+              ;;
+          esac
 
   psscriptanalyzer:
     name: PSScriptAnalyzer

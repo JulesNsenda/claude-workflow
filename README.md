@@ -486,22 +486,41 @@ measurement killed an earlier CRLF fixture that turned out to be tautological.
 
 ## Releases
 
-Two things carry the version — the git tag a clone pins with `git checkout
-v1.0.0`, and the `version` field in the plugin manifest a plugin install reads.
-[`version-check.sh`](./scripts/version-check.sh) asserts they agree, and CI runs
-it on every `v*` tag push. So the order is **push the tag, wait for CI, then
-create the release**: the check is deliberately detective rather than
-preventive, and a tag that nothing has consumed yet is cheap to delete and
+Two things carry the version that a *consumer* reads — the git tag a clone pins
+with `git checkout v1.0.0`, and the `version` field in the plugin manifest a
+plugin install reads. [`version-check.sh`](./scripts/version-check.sh) asserts
+they agree, and CI runs it on tag pushes. So the order is **push the tag, wait
+for CI, then create the release**: the check is deliberately detective rather
+than preventive, and a tag that nothing has consumed yet is cheap to delete and
 re-cut. What it exists to prevent is the two disagreeing *silently*.
+
+`CHANGELOG.md` is a third carrier and is **not** guarded — cutting a tag whose
+version has no matching changelog heading still passes. That leg stays a human
+check for now.
+
+The workflow triggers on `*`, not `v*`, on purpose. The trigger filter is the
+real gate on which tags get checked, so a `v*` filter would mean `git tag 1.1.0`
+runs no CI at all — the guard silently absent at exactly the moment it exists
+for. Matching every tag lets the script's own shape check reject a non-`v` tag
+loudly instead.
 
 It carries the same self-guard as the reference check — a fixture per failure
 mode, asserting the message rather than the exit status — and those fixtures run
 on every push, not only on tags, so the script can't sit unexercised between
-releases and first prove itself broken at the one moment it matters. One of them
-exists purely to catch a wiring mistake in the CI file rather than a bug in the
-script: `github.ref` is `refs/tags/v1.0.0` while `github.ref_name` is `v1.0.0`,
-and passing the former would fail every release forever without a bare-tag
-fixture ever noticing.
+releases and first prove itself broken at the one moment it matters. Two of them
+aren't about the script at all. One covers a wiring mistake in the CI file:
+`github.ref` is `refs/tags/v1.0.0` while `github.ref_name` is `v1.0.0`, and
+passing the former would fail every release forever without a bare-tag fixture
+ever noticing. Another runs the script against the *real* manifest on every
+push — otherwise the default-manifest path, which is the only path a release
+uses, would first be exercised at tag time.
+
+One guard has no fixture and can't have one: the multi-line-value refusal is
+unreachable while the key-count floor above it stands, and is verified by
+mutation instead. That floor counts *occurrences*, not matching lines, because
+counting lines inverted the whole check on a single-line manifest — `v9.9.9`
+passed clean against a manifest whose real version was `1.2.3`. The regression
+fixture asserts both directions.
 
 What the version numbers themselves mean — and why "breaking" is read against
 the installed surface rather than an API — is in
