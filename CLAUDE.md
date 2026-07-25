@@ -55,6 +55,10 @@ gears exist.
 - Reviewers and critics output **findings, not reasoning transcripts**.
 - While a subagent is working, wait silently — no status commentary until its
   report arrives.
+- Never spawn a subagent to re-check work you have already verified yourself —
+  but every reviewer the gears table or `plan-gates` calls for (the diff
+  critics, the dedicated test pass, runtime verification) is independent
+  review, not double-checking, and always runs.
 - If implementation deviates from the plan, surface it — don't improvise.
 - Commit per plan-item, not one batch commit per plan.
 - When a task ends, write durable decisions and gotchas to memory.
@@ -62,8 +66,9 @@ gears exist.
 ## Model routing (automatic — the user never runs /model)
 
 - **Reading / discovery → `Explore` subagent** (pinned to the fast tier via
-  `~/.claude/agents/explore.md`). Read directly in the main session only for
-  exact text you're about to edit.
+  `~/.claude/agents/explore.md`). Read directly in the main session for exact
+  text you're about to edit, or a lookup a handful of tool calls would finish —
+  spawning costs more than it saves below that floor.
 - **Planning, verifying, orchestrating → frontier** (the main session).
 - **Implementing → mid-tier `implementer` agents**, fanned out per cohesive unit.
 - **Testing → `test-runner` subagent or the `/test` skill** (mid tier).
