@@ -24,6 +24,9 @@
 #   scripts/run-stats.sh [plans-dir ...]      # default: docs/plans
 #   scripts/run-stats.sh ~/code/*/docs/plans  # aggregate across projects
 #
+# Tested against gawk only. CI exercises one awk implementation; mawk and busybox
+# awk are untried, so treat portability as unverified rather than assumed.
+#
 # Plan files live wherever the project keeps them; this repo gitignores docs/,
 # but that is a property of this repo, not of the workflow.
 
