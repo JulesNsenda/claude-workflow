@@ -480,8 +480,11 @@ jobs:
           # sibling of the checkout, not nested inside it, and has no git
           # repo anywhere in its ancestor chain, so the second case is
           # deterministic on a standard GitHub-hosted runner.
-          out=$(sh scripts/ref-check.sh "$RUNNER_TEMP/ref-does-not-exist-xyz" 2>&1); ec=$?
-          if [ "$ec" -eq 0 ]; then
+          # Note the `if`: GitHub runs steps as `bash -e`, so a bare
+          # `out=$(failing-cmd)` aborts the step before the next line runs.
+          # Every negative assertion here must keep the substitution inside an
+          # `if`/`||` for that reason.
+          if out=$(sh scripts/ref-check.sh "$RUNNER_TEMP/ref-does-not-exist-xyz" 2>&1); then
             echo "::error::non-existent root: checker reported clean but should have failed"; exit 1
           fi
           printf '%s\n' "$out" | grep -qF 'is not a directory' || {
