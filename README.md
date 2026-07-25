@@ -416,6 +416,38 @@ a per-project addition. Ask
 Claude to write one where it fits: *"add a Stop hook that runs `npm test` and
 blocks until green."*
 
+A related question: could `sandbox.network.strictAllowlist` — "deny
+non-allowlisted hosts for sandboxed commands without prompting," per the
+v2.1.219 CHANGELOG (its only description anywhere checked; it's absent from
+the settings reference's sandbox table, 30 keys checked, and from the
+sandboxing page) — enforce [`implementer`](./agents/implementer.md)'s "no
+web/research tools" constraint instead of leaving half of it
+instruction-held? No, for two decisive reasons. It can't target one agent:
+subagents "run in the same process as the parent session and use the same
+sandbox configuration," and no subagent frontmatter field names a sandbox
+or a network scope — the setting is session-wide or nothing, which would
+also gate the main session's `git fetch`/`gh` and `test-runner`'s
+`npm install`/`mvn`. And it's inert where this repo is maintained: the
+sandbox "runs on macOS, Linux, and WSL2" — not native Windows — and
+`failIfUnavailable` defaults to `false`, so on that platform it would warn
+and run unsandboxed. A rule that looks enforced and isn't is worse than the
+honest limit stated here.
+
+The constraint isn't purely instruction-held to begin with: `implementer`'s
+`tools:` allowlist (`Read, Edit, Write, Bash, Grep, Glob`) already denies
+`WebFetch`/`WebSearch` deterministically, no sandbox involved. Only the
+Bash-shelled half — `curl`, `wget`, `npm install`, `gh` — rests on the
+prompt. Two deterministic levers exist for that half too, and both are
+declined rather than absent: a `permissions.deny` rule such as
+`Bash(curl:*)` / `Bash(wget:*)`, and a per-subagent `hooks:` field. Declined
+because the first is session-wide like `strictAllowlist`, and either would
+change what the workflow does, not just how this one constraint is held. The
+obvious third candidate isn't one: `disallowedTools` *is* per-subagent, but it
+takes tool names (and MCP server patterns), not permission-rule syntax — it can
+deny `Bash` outright, which would take the implementer's build and test
+capability with it, and it cannot express "Bash, but no egress."
+Nothing here goes into `settings.json`.
+
 ## Making your own skill
 
 Copy [`skills/example-skill`](./skills/example-skill/SKILL.md) — it documents the
