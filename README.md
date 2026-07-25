@@ -18,7 +18,7 @@ Copy what's useful.
 | [`agents/`](./agents/) | [Subagents](https://docs.claude.com/en/docs/claude-code/sub-agents): the adversarial [`security-critic`](./agents/security-critic.md) and [`architecture-critic`](./agents/architecture-critic.md) (read-oriented tools, findings-only output), an [`implementer`](./agents/implementer.md) that builds strictly from the approved plan (no web/research tools), a [`test-runner`](./agents/test-runner.md) specialist, and an [`Explore`](./agents/explore.md) override pinned to the fast tier. (If your Claude Code version doesn't let a user agent shadow the built-in name, note that the usual workaround — `CLAUDE_CODE_SUBAGENT_MODEL` — is **not** an Explore-only lever: it outranks every subagent's `model:` frontmatter, so it would silently drop the two `opus`-pinned critics onto the fast tier too. Prefer the override file.) |
 | [`settings.json`](./settings.json) | Mostly permission hygiene: blocks the **Read tool** from secret paths (`.env*`, `secrets/`, `*.pem`/`*.key`, `~/.ssh`, `~/.aws`), denies the common force-push forms, asks before **every** push, allow-lists routine git commands. Plus one advisory behavioural default — `workflowSizeGuideline: small`, which asks Claude to aim under 5 agents in any *dynamic workflow* it writes. That is a different mechanism from this repo's own subagents, which it does not touch — and it is advice, not a cap. Setting it from a settings file needs ≥ 2.1.219 (`/config` has offered it since 2.1.202). If you merge this file by hand, merge the `permissions` block first and independently: it is the part that is load-bearing. And note the direction the installer's symlink runs — once linked, upstream changes to this file land in your live config on `git pull`, so `cp -L` it to a real file if you want to gate that. |
 | [`.claude-plugin/`](./.claude-plugin/plugin.json) | Plugin manifest, so the skills + agents can also be installed as a namespaced [plugin](https://docs.claude.com/en/docs/claude-code/plugins). |
-| [`scripts/`](./scripts/) | The leak guard, [`run-stats.sh`](./scripts/run-stats.sh) (the run-stats aggregator), and [`ref-check.sh`](./scripts/ref-check.sh), which asserts the docs and the `agents/`+`skills/` tree still name each other correctly. **Not** symlinked by the installer — run these from the clone. |
+| [`scripts/`](./scripts/) | The leak guard, [`run-stats.sh`](./scripts/run-stats.sh) (the run-stats aggregator), [`ref-check.sh`](./scripts/ref-check.sh), which asserts the docs and the `agents/`+`skills/` tree still name each other correctly, and [`version-check.sh`](./scripts/version-check.sh), which asserts a release tag matches the plugin manifest. **Not** symlinked by the installer — run these from the clone. |
 | [`install.sh`](./install.sh) / [`install.ps1`](./install.ps1) | Symlink the above into `~/.claude`. Idempotent; backs up anything it would overwrite. |
 | [`CHANGELOG.md`](./CHANGELOG.md) | What changed per release, and what major/minor/patch mean for a config repo. Tags track the version in the plugin manifest — pin a clone with `git checkout v1.0.0` if you don't want `main` to move under you. |
 
@@ -483,6 +483,29 @@ broken fixture per check, and asserts the *message* each one produces rather
 than just a non-zero exit — asserting the exit code alone was measured to let
 three of the four checks be deleted with the job still passing. The same
 measurement killed an earlier CRLF fixture that turned out to be tautological.
+
+## Releases
+
+Two things carry the version — the git tag a clone pins with `git checkout
+v1.0.0`, and the `version` field in the plugin manifest a plugin install reads.
+[`version-check.sh`](./scripts/version-check.sh) asserts they agree, and CI runs
+it on every `v*` tag push. So the order is **push the tag, wait for CI, then
+create the release**: the check is deliberately detective rather than
+preventive, and a tag that nothing has consumed yet is cheap to delete and
+re-cut. What it exists to prevent is the two disagreeing *silently*.
+
+It carries the same self-guard as the reference check — a fixture per failure
+mode, asserting the message rather than the exit status — and those fixtures run
+on every push, not only on tags, so the script can't sit unexercised between
+releases and first prove itself broken at the one moment it matters. One of them
+exists purely to catch a wiring mistake in the CI file rather than a bug in the
+script: `github.ref` is `refs/tags/v1.0.0` while `github.ref_name` is `v1.0.0`,
+and passing the former would fail every release forever without a bare-tag
+fixture ever noticing.
+
+What the version numbers themselves mean — and why "breaking" is read against
+the installed surface rather than an API — is in
+[`CHANGELOG.md`](./CHANGELOG.md).
 
 ## License
 
