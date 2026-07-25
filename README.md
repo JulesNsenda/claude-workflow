@@ -368,8 +368,11 @@ internal tool/agent names, machine-specific paths — in that file. It lives in
 ## Repo hygiene
 
 CI runs `shellcheck` on the shell scripts, PSScriptAnalyzer on the PowerShell
-installer, and a **leak guard**: the build fails if any blocklisted private
-string lands in the tree. The blocklist itself lives *outside* the repo (as the
+installer, a **smoke test** that parses
+[`scripts/run-stats.example.md`](./scripts/run-stats.example.md) with
+`run-stats.sh` — so the format doc and the parser can't drift apart silently —
+and a **leak guard**: the build fails if any blocklisted private string lands in
+the tree. The blocklist itself lives *outside* the repo (as the
 `LEAK_BLOCKLIST` GitHub Actions secret — one regex per line) precisely so the
 repo never has to name the things it must not contain.
 

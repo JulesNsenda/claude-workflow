@@ -10,12 +10,16 @@ enforces it on the others:
 
 So change the keys **here first**, then in the other two.
 
-## The block
+## Run stats
 
-A fenced block, headed `## Run stats`, containing **flat `key: value` lines
-only** — no nesting, no lists, no quoting, no anchors. The fence says `yaml`
-because flat scalars are valid YAML, but the parser is not a YAML parser: a
-nested map's child lines would be read as top-level keys.
+The heading above is the real one — this file is also the CI smoke-test
+fixture, so it is parsed by `run-stats.sh` on every build and any drift between
+this format and the parser fails the build rather than degrading quietly.
+
+A fenced block containing **flat `key: value` lines only** — no nesting, no
+lists, no quoting, no anchors. The fence says `yaml` because flat scalars are
+valid YAML, but the parser is not a YAML parser: a nested map's child lines
+would be read as top-level keys.
 
 ```yaml
 date: 2026-07-25

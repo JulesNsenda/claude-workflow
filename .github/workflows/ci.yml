@@ -32,7 +32,35 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Lint shell scripts
-        run: shellcheck install.sh scripts/leak-check.sh
+        run: shellcheck install.sh scripts/leak-check.sh scripts/run-stats.sh
+
+  run-stats:
+    name: run-stats.sh smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse the canonical format fixture
+        run: |
+          # docs/ is gitignored, so CI never has real plan files. The tracked
+          # example doubles as the fixture: if its keys drift from the parser,
+          # this fails instead of the drift going unnoticed. Use a dedicated
+          # directory — never $RUNNER_TEMP itself, which holds the leak
+          # blocklist in the job above.
+          fixture="$RUNNER_TEMP/plans-fixture"
+          mkdir -p "$fixture"
+          cp scripts/run-stats.example.md "$fixture/"
+          out=$(bash scripts/run-stats.sh "$fixture")
+          echo "$out"
+          echo "$out" | grep -q '1 run(s)\.' \
+            || { echo "::error::run-stats.sh did not parse the canonical fixture"; exit 1; }
+          echo "$out" | grep -q 'escape rate' \
+            || { echo "::error::run-stats.sh printed no ratios"; exit 1; }
+      - name: Handle the empty case without dying
+        run: |
+          empty="$RUNNER_TEMP/plans-empty"
+          mkdir -p "$empty"
+          bash scripts/run-stats.sh "$empty" | grep -q 'nothing to aggregate' \
+            || { echo "::error::empty directory not handled"; exit 1; }
 
   psscriptanalyzer:
     name: PSScriptAnalyzer
