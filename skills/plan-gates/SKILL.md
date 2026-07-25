@@ -68,7 +68,9 @@ reasoning transcripts**.
    addresses or consciously rejects it — and, appended at Gate 2,
    **Agent critiques considered — diff stage**: same format, separate corpus,
    sub-headed per plan-item and pass (`### <item> · pass N`) so the two stages
-   and the fix-loop iterations stay countable apart.
+   and the fix-loop iterations stay countable apart. Finally **Run stats**,
+   filled in at the end of Phase 2 (step 9). Those sections, sized to the
+   task — cover the substance, nothing beyond it, no filler or restatement.
 6. **Stop for approval.** No production code until the user says "looks
    good" / "ship it" / "go ahead" or similar.
 
@@ -118,6 +120,14 @@ Models switch automatically per phase: the main session stays frontier
 8. **Commit per plan-item** as it clears all four gates — tick its checkbox in
    the same commit. Don't batch the whole plan into one commit; per-item
    commits bound derailment and make reverts cheap.
-9. **Capture what you learned.** Write durable decisions and gotchas to
-   memory; keep the plan file updated if scope legitimately changed so it
-   stays a faithful record.
+9. **Fill in `## Run stats`** before the final commit — format and key list in
+   [`scripts/run-stats.example.md`](../../scripts/run-stats.example.md); read
+   it rather than reconstructing the keys from memory. **Record what happened,
+   not what should have happened.** A run where the critics found nothing and a
+   defect escaped anyway is the most valuable row in the set — never round it
+   toward looking good, and write `unknown` for anything you don't actually
+   know rather than guessing a number. `scripts/run-stats.sh` aggregates these
+   across runs.
+10. **Capture what you learned.** Write durable decisions and gotchas to
+    memory; keep the plan file updated if scope legitimately changed so it
+    stays a faithful record.
