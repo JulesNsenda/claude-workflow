@@ -57,7 +57,10 @@ gears exist.
   green.
 - Reviewers and critics output **findings, not reasoning transcripts**.
 - While a subagent is working, wait silently — no status commentary until its
-  report arrives.
+  report arrives. Cadence otherwise: one sentence before the first tool call,
+  updates only on a finding or a change of direction, outcome first when you
+  finish. Match written deliverables to what the task needs — no filler
+  sections, no redundant summaries.
 - Never spawn a subagent to re-check work you have already verified yourself —
   but every reviewer the gears table or `plan-gates` calls for (the diff
   critics, the dedicated test pass, runtime verification) is independent
