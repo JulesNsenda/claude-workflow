@@ -104,7 +104,7 @@ rules), the [`plan-gates`](./skills/plan-gates/SKILL.md) skill holds the exact
 phases and gates, and the critics live in [`agents/`](./agents/). This summary
 is deliberately loose so it drifts as little as possible.
 
-## Effort, and harness assumptions
+## Assumptions, and the knobs behind them
 
 **Effort is the second axis of the tier table.** Alongside the model tier, each
 agent pins an [`effort`](https://platform.claude.com/docs/en/build-with-claude/effort)
@@ -120,20 +120,52 @@ review. `xhigh` is reserved for the riskiest full-gear reviews. (This is Claude
 Code's subagent `effort:` field — distinct from Claude Managed Agents'
 `model.effort`.)
 
-**Harness assumptions — Claude Code ≥ 2.1.218** (version-specific, so stamped):
+### Nesting: the agents this repo defines can't spawn
+
+**No agent defined here is granted a spawn tool.** Every `tools:` list in
+[`agents/`](./agents/) is an allowlist, and none of them includes `Agent` — so
+whatever the platform default is, these agents can't nest through the harness.
+(`Bash` remains a general escape hatch; a depth cap is not a sandbox, and the
+`permissions.deny` rules below constrain the **Read tool**, not shell reads.)
+The uncontrolled edges are the built-ins this repo doesn't define: the
+`general-purpose` task-fit critics the plan-gates panel spawns, and
+`/code-review` at Gate 2. Omitting `Agent` from `tools:` only works for agents
+you define; for the built-ins the levers are `disallowedTools` and the guard
+below.
+
+The **platform default is contested**, so don't rely on it either way. The
+v2.1.219 CHANGELOG says subagents now nest to depth 3 by default (was 1) and
+that `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1` disables nesting; the sub-agents
+reference still says a subagent can't spawn subagents by default, with its
+version note covering only v2.1.172–v2.1.216. Set the variable explicitly if
+you depend on the depth:
+
+```jsonc
+{
+  "permissions": { /* … keep yours … */ },
+  "env": { "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH": "1" }
+}
+```
+
+`"1"` means one layer below the main conversation — subagents that cannot
+delegate further; verify that reading against your installed version. **Merge
+this into your settings, don't paste over them** — the `permissions` block has
+to survive. And check `ls -l ~/.claude/settings.json` first: on a fresh install
+it is a *symlink into this repo*, so editing it in place would put your personal
+environment into a tracked, public file. Replace it with a real copy (`cp -L`)
+before adding anything machine-specific.
+
+### Harness assumptions — Claude Code ≥ 2.1.218
+
+Version-specific, so stamped — everything in this subsection rots on a
+platform schedule:
 
 - **Assumes ≥ 2.1.218**, where `/code-review` — this workflow's Gate 2 — runs as a
   *background subagent*, so reviewing the diff no longer eats the orchestrator's
   context.
-- If you **extend** this repo, mind the current subagent defaults: subagents no
-  longer spawn nested subagents by default (raise
-  `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH` to allow deeper nesting); concurrent
-  subagents are capped (`CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS`, default 20); and
-  `--max-budget-usd` now halts background subagents once the cap is hit — worth
-  setting for unattended runs.
-- **This workflow is unaffected by the no-nesting default:** every agent here
-  spawns depth-1 from the main session, so nothing here needs
-  `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH`.
+- Concurrent subagents are capped (`CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS`,
+  default 20), and `--max-budget-usd` halts background subagents once the
+  budget is hit — worth setting for unattended runs.
 
 ## Install
 
