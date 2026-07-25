@@ -69,9 +69,21 @@ if [ ! -f "$manifest" ]; then
 fi
 
 # Fail-loud floor. A checker that extracts nothing exits 0 forever and reads as
-# green, so zero keys and several keys are both refusals rather than a guess:
-# `grep -c` is allowed to return 1 here, hence the `|| true`.
-key_count=$(grep -cE '"version"[[:space:]]*:' "$manifest" || true)
+# green, so zero keys and several keys are both refusals rather than a guess.
+#
+# Count OCCURRENCES (`grep -o`), not matching lines (`grep -c`). This is not a
+# nicety — with `grep -c` the whole guard inverts on a single-line manifest:
+# `{"name":"x","version":"1.2.3","dep":{"version":"9.9.9"}}` is one line, so the
+# count is 1, the ambiguity refusal never fires, and the greedy `.*` in the sed
+# below takes the LAST match. Measured: `v9.9.9` passed clean while the
+# top-level version a plugin install actually reads was 1.2.3, and the correct
+# `v1.2.3` was rejected. Any reflow (`jq -c`, a formatter) or a nested block
+# that carries its own version reaches that state.
+#
+# Do NOT "fix" this by anchoring the key to the start of a line instead: that
+# quietly converts refuse-on-ambiguity into read-whichever-is-top-level, which
+# is a guess.
+key_count=$(grep -oE '"version"[[:space:]]*:' "$manifest" | wc -l | tr -d ' ')
 [ -n "$key_count" ] || key_count=0
 
 if [ "$key_count" -eq 0 ]; then
@@ -99,10 +111,13 @@ fi
 #
 # The line count is not redundant with the shape check that follows it: `grep`
 # matches line by line, so a MULTI-line value satisfies `^...$` as soon as any
-# one of its lines does. The multi-key guard above already prevents the only
-# route to a multi-line value today — this keeps the shape check honest on its
-# own terms rather than depending on that ordering. (Found by deleting the
-# multi-key guard and watching a `1.0.0\n2.0.0` value sail through.)
+# one of its lines does.
+#
+# Be precise about its status: this is UNREACHABLE while the key-count floor
+# above stands, because `sed -n ...p` emits one line per matching input line and
+# two matches now refuse before reaching here. It is verified by mutation, not
+# by fixture — no fixture can reach it. If you ever weaken the floor above, this
+# is what catches the fallout; that is the only reason it is here.
 if [ "$(printf '%s' "$manifest_version" | wc -l | tr -d ' ')" -ne 0 ]; then
   # shellcheck disable=SC2016 # literal backticks and $VAR in the message text, not expansions
   printf 'version-check: manifest `%s` yielded a multi-line version value — refusing to use it\n' "$manifest" >&2
