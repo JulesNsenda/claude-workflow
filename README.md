@@ -234,6 +234,33 @@ from the classifier fallback described above and from Claude Code's
 `--fallback-model` chains, which are live and not beta. Noted so the next
 person reading the Opus 5 release notes can see they were considered.
 
+## Measuring the workflow
+
+Every full-gear run ends by writing a short `## Run stats` block into its plan
+file — findings actioned, rejected and dropped at each critic pass, defects that
+escaped both passes, agents spawned, gates that failed first time.
+[`scripts/run-stats.sh`](./scripts/run-stats.sh) aggregates those blocks across
+runs; the format is [`scripts/run-stats.example.md`](./scripts/run-stats.example.md).
+
+The point is to stop describing this workflow with adjectives. Three questions
+need evidence: do the critics earn their cost (how much is caught at plan stage
+versus diff stage versus escaping to tests and runtime), are the gear thresholds
+right, and where does the token budget actually go.
+
+**What these numbers can and can't support.** This is a sample of one person's
+tasks, scored by the same person who chose the workflow — not a benchmark. It
+can support claims about *this* workflow on *this* kind of work, and nothing
+comparative: it cannot tell you this setup beats another one, because there is
+no control. Rejected findings are a signal, not a failure — they measure critic
+noise, which is exactly what you want to watch after telling the critics to stop
+filtering themselves. And the instrument can't see its own miscalibration: a
+ratio computed wrongly, or a key nobody ever fills, looks identical to a healthy
+run. Treat a suspiciously clean column as a reason to check the script, not as a
+result.
+
+Plan files live in `docs/`, which is gitignored — the data stays on your machine
+and is never committed.
+
 ## Install
 
 ```bash
