@@ -215,8 +215,15 @@ Also version-stamped. Three facts that decide how to read the tier table:
 On cost: Opus 5 is not a step up from the previous frontier Opus — same
 per-token price, with a 1M-token context window as both its default and its
 maximum. In Claude Code that window is included on Max, Team and Enterprise and
-needs usage credits on Pro. Current numbers live on the
+needs usage credits on Pro. Fast mode runs it at roughly 2.5× speed, billed to
+usage credits. Current numbers live on the
 [pricing page](https://claude.com/pricing); this repo deliberately carries none.
+
+**Watched, not adopted.** Mid-conversation tool changes and server-side
+automatic fallbacks are both in beta and both platform-side — they are API
+request features, with nothing for a Claude Code configuration repo to adopt
+yet. Noted here so the next person to read the Opus 5 release notes knows they
+were considered and skipped, not missed.
 
 ## Install
 
