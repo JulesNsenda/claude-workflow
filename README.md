@@ -21,6 +21,7 @@ Copy what's useful.
 | [`scripts/`](./scripts/) | The leak guard, [`run-stats.sh`](./scripts/run-stats.sh) (the run-stats aggregator), [`ref-check.sh`](./scripts/ref-check.sh), which asserts the docs and the `agents/`+`skills/` tree still name each other correctly, and [`version-check.sh`](./scripts/version-check.sh), which asserts a release tag matches the plugin manifest. **Not** symlinked by the installer — run these from the clone. |
 | [`install.sh`](./install.sh) / [`install.ps1`](./install.ps1) | Symlink the above into `~/.claude`. Idempotent; backs up anything it would overwrite. |
 | [`CHANGELOG.md`](./CHANGELOG.md) | What changed per release, and what major/minor/patch mean for a config repo. Tags track the version in the plugin manifest — pin a clone with `git checkout v1.0.0` if you don't want `main` to move under you. |
+| [`.claude/CLAUDE.md`](./.claude/CLAUDE.md) | Guidance for working **on this repo** — commands, the layering rules, and the CI invariants that prose edits break. The only tracked file under `.claude/`, and the counterpart to the row at the top of this table: that `CLAUDE.md` is the shipped product and loads everywhere, this one is project memory here and ships to nobody's `~/.claude`. Not installed, not in the reference checker's corpus. |
 
 ## The workflow, in one screen
 
