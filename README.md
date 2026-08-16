@@ -81,14 +81,18 @@ flowchart TD
         G1["Gate 1 · conformance —<br/>diff vs plan, item by item"]:::frontier --> G2
         G2["Gate 2 · adversarial diff review —<br/>security + architecture + correctness"] --> G3
         G3["Gate 3 · dedicated test pass —<br/>suite green, change fully covered"]:::mid --> G4
-        G4["Gate 4 · runtime verify —<br/>drive the real flow end-to-end"]
+        G4["Gate 4 · runtime verify —<br/>drive the real flow end-to-end"] --> G5
+        G5["Gate 5 · simplify —<br/>a junior can read it, behaviour unchanged"] --> ReV
+        ReV["Re-verify — re-run Gates 3 + 4<br/>on the simplified code"]
         Fix["Fix loop —<br/>re-plan, re-implement"]:::frontier
         G1 -. "fail" .-> Fix
         G2 -. "fail" .-> Fix
         G3 -. "fail" .-> Fix
         G4 -. "fail" .-> Fix
+        G5 -. "fail" .-> Fix
+        ReV -. "fail" .-> Fix
         Fix --> Impl
-        G4 -->|"all green"| Commit["Commit this plan-item"]
+        ReV -->|"all green"| Commit["Commit this plan-item"]
         Commit -->|"more items"| Impl
     end
 
