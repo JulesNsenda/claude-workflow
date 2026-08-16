@@ -125,13 +125,29 @@ the environment overrides frontmatter, and Enterprise per-model effort caps
 clamp it. (This is Claude Code's subagent `effort:` field — distinct from Claude
 Managed Agents' `model.effort`.)
 
-**`xhigh` is a session lever, not a pin.** No agent here pins it, and Claude
-Code has no per-invocation effort override — the Agent tool takes a `model`
-parameter, but there is no `effort` equivalent. So `/effort xhigh` before a
-high-risk review escalates the orchestrator and any *un-pinned* agent, and
-leaves the two `high`-pinned critics exactly where they were. Risk-tiering
-therefore works by **adding an angle rather than adding effort**: for a diff
-touching auth, payments, or data, Gate 2 spawns an extra task-fit critic.
+**`xhigh` is a session lever, not a pin.** No agent here pins it, and there is
+no per-invocation effort override **at the point of spawning** — the Agent tool
+takes a `model` parameter, but there is no `effort` equivalent. So `/effort
+xhigh` before a high-risk review escalates the orchestrator and any *un-pinned*
+agent, and leaves the two `high`-pinned critics exactly where they were.
+Risk-tiering therefore works by **adding an angle rather than adding effort**:
+for a diff touching auth, payments, or data, Gate 2 spawns an extra task-fit
+critic.
+
+Scope that claim carefully: it is about **the Agent tool**, which is still the
+mechanism with no effort parameter. A **skill** is a different story — skill
+frontmatter carries its own effort and model fields, and the effort one
+**overrides** the session level while the skill is active.
+
+That lever exists, and `plan-gates` deliberately does **not** use it. Pinning
+`high` there looks like it would hold the orchestrator the way the critics'
+pins hold the reviewers, but a skill-level effort field overrides rather than
+floors: on a session escalated to `xhigh` it would clamp the entire full-gear
+procedure *down* to `high`, silently, at exactly the moment someone paid to
+escalate. That is the same argument rejected two paragraphs down for a `medium`
+pin on the security gate, and it is rejected here for the same reason. The
+protection it would buy — a cheap session can't plan at low effort — is not
+worth breaking the escalation path the paragraph above promises.
 
 That also settles the two-pass question. The prompting guide notes review
 accuracy holds at lower effort, "which supports a fast pass at review time and
@@ -182,7 +198,10 @@ platform schedule:
 
 - **Assumes ≥ 2.1.218**, where `/code-review` — this workflow's Gate 2 — runs as a
   *background subagent*, so reviewing the diff no longer eats the orchestrator's
-  context.
+  context. **Re-check against 2.1.232**, which narrowed that to *at high
+  effort*: below high it is back in the orchestrator's context. And since
+  2.1.223 a bare call reuses the level typed last, so the level is not a
+  stylistic choice — `plan-gates` names `high` at Gate 2 for both reasons.
 - Concurrent subagents are capped (`CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS`,
   default 20), and `--max-budget-usd` halts background subagents once the
   budget is hit — worth setting for unattended runs.
