@@ -7,7 +7,8 @@ description: >-
   "full" gear from the global gears table, or when the user says "plan this",
   "full workflow", or asks for the adversarial planning panel. Covers Phase 1
   (orient, draft, adversarial critics, plan file, approval stop) and Phase 2
-  (implement on mid-tier agents, four gates, fix loop, commit per item).
+  (implement on mid-tier agents, five gates — conformance, adversarial diff
+  review, tests, runtime, simplify — fix loop, commit per item).
 # No `effort:` pin here, deliberately — see the README's effort section. A skill
 # effort field OVERRIDES the session level rather than flooring it, so pinning
 # `high` would clamp a deliberate `/effort xhigh` run down for the whole
@@ -125,12 +126,42 @@ Models switch automatically per phase: the main session stays frontier
 6. **Gate 4 · Runtime verification.** A green suite is not a working feature.
    Exercise the affected flow end-to-end the way a user would (the built-in
    `/verify` skill fits here) and observe actual behavior.
-7. **Fix loop.** Any gate failure: re-plan the fix (frontier), re-implement
+7. **Gate 5 · Simplify — readability is part of done.** The code works; this
+   gate is where it becomes code someone else can own. The bar: a competent
+   junior developer should be able to read the change and say what it does
+   without the plan file open. Run the built-in `/simplify` over the change —
+   it applies reuse, simplification, efficiency and altitude cleanups and
+   deliberately does not hunt for bugs — then read the result yourself against
+   the same bar. Anything beyond a light cleanup goes to a mid-tier
+   `implementer` with the specific cleanups named: this is implementation, so
+   it runs on the implementation tier.
+
+   What this gate looks for:
+   - names that say what a thing *is*, not how it came to be;
+   - no cleverness that needs a comment to be legible — while keeping the
+     comments that record *why*, which are the opposite of clutter;
+   - no speculative generality: an abstraction earns its place at the second
+     caller, not the first;
+   - control flow shaped like the problem the plan describes.
+
+   Two hard limits. **Simplifying must not change behaviour** — a cleanup that
+   alters what the code does stops being this gate's business and goes back to
+   the plan. And it must not **weaken a test** to stay green; that is an
+   every-gear hard rule, and this is the gate most likely to tempt it.
+8. **Re-verify after simplifying — always.** A cleanup is a code change, so
+   the evidence gathered before it no longer describes what is in the tree:
+   re-run **Gate 3** (the dedicated test pass) and **Gate 4** (runtime
+   verification) on the simplified code, and treat a regression here exactly
+   like any other gate failure. Gates 1 and 2 re-open only if the cleanup moved
+   code between files, changed a signature, or touched something a critic
+   called out — a rename or a collapsed conditional doesn't need the panel
+   again. Judge it, and record which you re-ran.
+9. **Fix loop.** Any gate failure: re-plan the fix (frontier), re-implement
    (mid tier), re-run the affected gates. Repeat until clean.
-8. **Commit per plan-item** as it clears all four gates — tick its checkbox in
+10. **Commit per plan-item** as it clears all five gates — tick its checkbox in
    the same commit. Don't batch the whole plan into one commit; per-item
    commits bound derailment and make reverts cheap.
-9. **Fill in `## Run stats`** after the last plan-item commit, as its own
+11. **Fill in `## Run stats`** after the last plan-item commit, as its own
    `chore(plan): record run stats` commit. The format and key list live in
    `scripts/run-stats.example.md` in the claude-workflow repo — read that file
    rather than reconstructing the keys from memory (the installer symlinks
@@ -140,7 +171,7 @@ Models switch automatically per phase: the main session stays frontier
    in the set — never round it toward looking good, and write `unknown` for
    anything you don't actually know rather than guessing. `unknown` drops the
    run from the ratios rather than counting as zero, so honesty costs nothing.
-10. **Capture what you learned.** Write durable decisions and gotchas to
+12. **Capture what you learned.** Write durable decisions and gotchas to
     memory; keep the plan file updated if scope legitimately changed so it
     stays a faithful record. Keep an entry to three things — the decision,
     the why, and the trap it avoids; the README covers the shape. What has
