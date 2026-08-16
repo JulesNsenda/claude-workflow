@@ -8,6 +8,11 @@ description: >-
   "full workflow", or asks for the adversarial planning panel. Covers Phase 1
   (orient, draft, adversarial critics, plan file, approval stop) and Phase 2
   (implement on mid-tier agents, four gates, fix loop, commit per item).
+# No `effort:` pin here, deliberately — see the README's effort section. A skill
+# effort field OVERRIDES the session level rather than flooring it, so pinning
+# `high` would clamp a deliberate `/effort xhigh` run down for the whole
+# procedure. That is the same argument this repo already rejected for a `medium`
+# pin on the security gate.
 ---
 
 # Skill: plan-gates
@@ -101,8 +106,10 @@ Models switch automatically per phase: the main session stays frontier
    approach? anything derailed? Pass/fail per item.
 4. **Gate 2 · Adversarial diff review.** Re-run **`security-critic`** and
    **`architecture-critic`** on the actual diff — bugs live in code, not
-   plans — plus a correctness pass via the built-in `/code-review` skill
-   (the built-in `/security-review` also fits security-sensitive diffs).
+   plans — plus a correctness pass via the built-in `/code-review` skill,
+   naming the level explicitly and never invoking it bare (the README's
+   harness-assumptions section carries the version-stamped reason). The
+   built-in `/security-review` also fits security-sensitive diffs.
    Weight this gate
    at least as heavily as the plan review; it's where most real defects are
    caught. Triage per Phase 1 step 4, recording into **Agent critiques
