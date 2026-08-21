@@ -21,6 +21,7 @@ Copy what's useful.
 | [`scripts/`](./scripts/) | The leak guard, [`run-stats.sh`](./scripts/run-stats.sh) (the run-stats aggregator), [`ref-check.sh`](./scripts/ref-check.sh), which asserts the docs and the `agents/`+`skills/` tree still name each other correctly, and [`version-check.sh`](./scripts/version-check.sh), which asserts a release tag matches the plugin manifest. **Not** symlinked by the installer — run these from the clone. |
 | [`install.sh`](./install.sh) / [`install.ps1`](./install.ps1) | Symlink the above into `~/.claude`. Idempotent; backs up anything it would overwrite. |
 | [`CHANGELOG.md`](./CHANGELOG.md) | What changed per release, and what major/minor/patch mean for a config repo. Tags track the version in the plugin manifest — pin a clone with `git checkout v1.0.0` if you don't want `main` to move under you. |
+| [`.claude/CLAUDE.md`](./.claude/CLAUDE.md) | Guidance for working **on this repo** — commands, the layering rules, and the CI invariants that prose edits break. The only tracked file under `.claude/`, and the counterpart to the row at the top of this table: that `CLAUDE.md` is the shipped product and loads everywhere, this one is project memory here and ships to nobody's `~/.claude`. Not installed, not in the reference checker's corpus. |
 
 ## The workflow, in one screen
 
@@ -80,14 +81,18 @@ flowchart TD
         G1["Gate 1 · conformance —<br/>diff vs plan, item by item"]:::frontier --> G2
         G2["Gate 2 · adversarial diff review —<br/>security + architecture + correctness"] --> G3
         G3["Gate 3 · dedicated test pass —<br/>suite green, change fully covered"]:::mid --> G4
-        G4["Gate 4 · runtime verify —<br/>drive the real flow end-to-end"]
+        G4["Gate 4 · runtime verify —<br/>drive the real flow end-to-end"] --> G5
+        G5["Gate 5 · simplify —<br/>a junior can read it, behaviour unchanged"] --> ReV
+        ReV["Re-verify — re-run Gates 3 + 4<br/>on the simplified code"]
         Fix["Fix loop —<br/>re-plan, re-implement"]:::frontier
         G1 -. "fail" .-> Fix
         G2 -. "fail" .-> Fix
         G3 -. "fail" .-> Fix
         G4 -. "fail" .-> Fix
+        G5 -. "fail" .-> Fix
+        ReV -. "fail" .-> Fix
         Fix --> Impl
-        G4 -->|"all green"| Commit["Commit this plan-item"]
+        ReV -->|"all green"| Commit["Commit this plan-item"]
         Commit -->|"more items"| Impl
     end
 
@@ -124,13 +129,29 @@ the environment overrides frontmatter, and Enterprise per-model effort caps
 clamp it. (This is Claude Code's subagent `effort:` field — distinct from Claude
 Managed Agents' `model.effort`.)
 
-**`xhigh` is a session lever, not a pin.** No agent here pins it, and Claude
-Code has no per-invocation effort override — the Agent tool takes a `model`
-parameter, but there is no `effort` equivalent. So `/effort xhigh` before a
-high-risk review escalates the orchestrator and any *un-pinned* agent, and
-leaves the two `high`-pinned critics exactly where they were. Risk-tiering
-therefore works by **adding an angle rather than adding effort**: for a diff
-touching auth, payments, or data, Gate 2 spawns an extra task-fit critic.
+**`xhigh` is a session lever, not a pin.** No agent here pins it, and there is
+no per-invocation effort override **at the point of spawning** — the Agent tool
+takes a `model` parameter, but there is no `effort` equivalent. So `/effort
+xhigh` before a high-risk review escalates the orchestrator and any *un-pinned*
+agent, and leaves the two `high`-pinned critics exactly where they were.
+Risk-tiering therefore works by **adding an angle rather than adding effort**:
+for a diff touching auth, payments, or data, Gate 2 spawns an extra task-fit
+critic.
+
+Scope that claim carefully: it is about **the Agent tool**, which is still the
+mechanism with no effort parameter. A **skill** is a different story — skill
+frontmatter carries its own effort and model fields, and the effort one
+**overrides** the session level while the skill is active.
+
+That lever exists, and `plan-gates` deliberately does **not** use it. Pinning
+`high` there looks like it would hold the orchestrator the way the critics'
+pins hold the reviewers, but a skill-level effort field overrides rather than
+floors: on a session escalated to `xhigh` it would clamp the entire full-gear
+procedure *down* to `high`, silently, at exactly the moment someone paid to
+escalate. That is the same argument rejected two paragraphs down for a `medium`
+pin on the security gate, and it is rejected here for the same reason. The
+protection it would buy — a cheap session can't plan at low effort — is not
+worth breaking the escalation path the paragraph above promises.
 
 That also settles the two-pass question. The prompting guide notes review
 accuracy holds at lower effort, "which supports a fast pass at review time and
@@ -181,7 +202,10 @@ platform schedule:
 
 - **Assumes ≥ 2.1.218**, where `/code-review` — this workflow's Gate 2 — runs as a
   *background subagent*, so reviewing the diff no longer eats the orchestrator's
-  context.
+  context. **Re-check against 2.1.232**, which narrowed that to *at high
+  effort*: below high it is back in the orchestrator's context. And since
+  2.1.223 a bare call reuses the level typed last, so the level is not a
+  stylistic choice — `plan-gates` names `high` at Gate 2 for both reasons.
 - Concurrent subagents are capped (`CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS`,
   default 20), and `--max-budget-usd` halts background subagents once the
   budget is hit — worth setting for unattended runs.

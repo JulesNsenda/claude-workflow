@@ -25,4 +25,10 @@ Thumbs.db
 
 # Subagent project-scope memory writes to .claude/agent-memory/, and
 # leak-check.sh's git grep only sees tracked files — stay untracked here too.
-/.claude/
+#
+# `/.claude/*`, NOT `/.claude/` — with the trailing-slash form git never descends
+# into the directory, so the negation below would be a silent no-op. The one
+# tracked exception is the repo-development guide, which is hand-written, public,
+# and wants to be covered by leak-check.sh precisely because it is tracked.
+/.claude/*
+!/.claude/CLAUDE.md

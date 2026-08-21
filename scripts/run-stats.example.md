@@ -54,7 +54,7 @@ escalated_from: none
 | `findings_*_dropped` | `medium`/`low` findings dropped without individual reasons. Counted so the rejection rate can't read as a whole-panel number when it only saw the severe tail. |
 | `escaped` | Defects **both critic passes missed**, caught at Gate 3, Gate 4, or by you afterwards. The most important number here. |
 | `agents_spawned` | Total across both phases, including fix-loop re-runs. |
-| `gates_failed_first_pass` | How many of gates 1–4 needed a fix loop. `none` if all passed first time. |
+| `gates_failed_first_pass` | How many of gates 1–5 needed a fix loop. `none` if all passed first time. Gate 5's re-verification counts as part of Gate 5, not as a second failure of gates 3–4. |
 | `escalated_from` | The gear the task *started* at if it moved up (`skip`, `light`); `none` if it started where it finished. |
 
 ## Sentinels
