@@ -210,26 +210,34 @@ platform schedule:
   default 20), and `--max-budget-usd` halts background subagents once the
   budget is hit — worth setting for unattended runs.
 
-### Model assumptions — Opus 5 era, Claude Code ≥ 2.1.219
+### Model assumptions — Fable 5.1 / Opus 5.5 era, checked against Claude Code 2.1.284
 
 Three facts that decide how to read the tier table, then cost context and what
 was watched but not adopted (those two carry no version stamp):
 
 - **The critics pin `opus`, which is not the same as "strongest available".**
-  `best` resolves to Fable 5 where your organization has access to it,
-  *otherwise the latest Opus* — so on an org with Fable 5, `best` and `opus`
-  diverge and these agents run the Opus. That is a deliberate cost choice, not
+  `best` resolves to Fable (5.1 today, which needs ≥ 2.1.257) where your
+  organization has access to it, *otherwise the latest Opus* (5.5 today) — so
+  on an org with Fable, `best` and `opus` diverge and these agents run the
+  Opus. That is a deliberate cost choice, not
   an oversight; switch the two `model:` pins to `best` if you'd rather have the
   ceiling. Watch one edge: `opus` resolves by **provider**, and on Microsoft
   Foundry it lands on Opus 4.6. Separately, the **`default` setting** varies by
-  **account type** (Sonnet 5 on Pro, Team Standard and Enterprise subscription
-  seats) — a different axis from the alias, and easy to conflate. See the
+  **account type** — a different axis from the alias, and easy to conflate. A
+  copy of that table used to live here (Sonnet 5 on Pro, Team Standard and
+  Enterprise seats) and went stale with the 5.5 lineup, which is why it no
+  longer does. See the
   [model-config docs](https://code.claude.com/docs/en/model-config) for both
   tables rather than trusting a copy here.
 - **A report line naming a previous Opus is expected, not a routing bug.**
-  Opus 5 runs cybersecurity and biology safety classifiers; a
-  cybersecurity-flagged request re-runs on Opus 4.8, and a biology-flagged one
-  refuses outright with no fallback. Critically, **the session then continues
+  The frontier models run cybersecurity and biology safety classifiers. A
+  cybersecurity-flagged request re-runs on an older model — per the
+  CHANGELOG, Fable and Opus 5.5 step down through Opus 5 to Opus 4.8, and
+  Sonnet 5.5 to Sonnet 5 — and a biology-flagged one refuses outright with no
+  fallback. Don't confuse that chain with the per-model `fallback_3p` table in
+  the build (Fable 5.1 → Fable 5 → Opus 5.5 → Opus 5, checked in 2.1.284):
+  that one is third-party-provider *availability* fallback, a different
+  mechanism, and does not corroborate the classifier chain. Critically, **the session then continues
   on the fallback model until you run `/model`** — so a security review that
   trips the classifier can leave the rest of the session downgraded, which is
   exactly why every agent report opens with a `model:` line. Under an
@@ -241,13 +249,13 @@ was watched but not adopted (those two carry no version stamp):
   disables CLAUDE.md, skills, MCP servers, hooks *and this repo's agents*,
   while git status and directory names still load, so it does not rule out the
   repository's own content.
-- **Effort carries over between models.** Opus 5 does *not* reset to its own
+- **Effort carries over between models.** Opus 5.x does *not* reset to its own
   default when you switch to it — a level you previously set carries over, and
   `low`/`medium`/`high`/`xhigh` persist across sessions once set interactively
   (`max` is session-only). So the tier table's pins are the source of truth,
   and an effort level set for one experiment outlives it.
 
-On cost: Opus 5 is not a step up from the previous frontier Opus — same
+On cost (recorded for Opus 5; not re-checked for 5.5): Opus 5 is not a step up from the previous frontier Opus — same
 per-token price, with a 1M-token context window as both its default and its
 maximum. In Claude Code that window is included on Max, Team and Enterprise and
 needs usage credits on Pro. Fast mode runs it up to 2.5× faster, billed to
