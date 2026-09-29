@@ -81,14 +81,18 @@ function ConvertTo-JString([string]$s) {
   $sb = New-Object System.Text.StringBuilder
   [void]$sb.Append('"')
   foreach ($c in $s.ToCharArray()) {
-    switch ($c) {
-      '"'  { [void]$sb.Append('\"') }
-      '\'  { [void]$sb.Append('\\') }
-      "`n" { [void]$sb.Append('\n') }
-      "`t" { [void]$sb.Append('\t') }
-      "`r" { [void]$sb.Append('\r') }
-      "`b" { [void]$sb.Append('\b') }
-      "`f" { [void]$sb.Append('\f') }
+    # Switch on the code point, never on the character: `switch` compares
+    # strings culture-sensitively, and under PowerShell 7's ICU a control
+    # character is "ignorable" — DEL (0x7f) matched the "`b" case and printed
+    # \b. The del-escape fixture caught it on the pwsh leg only.
+    switch ([int]$c) {
+      34 { [void]$sb.Append('\"') }
+      92 { [void]$sb.Append('\\') }
+      10 { [void]$sb.Append('\n') }
+      9  { [void]$sb.Append('\t') }
+      13 { [void]$sb.Append('\r') }
+      8  { [void]$sb.Append('\b') }
+      12 { [void]$sb.Append('\f') }
       default {
         if ([int]$c -lt 32 -or [int]$c -eq 127) { [void]$sb.Append(('\u{0:x4}' -f [int]$c)) }
         else { [void]$sb.Append($c) }
