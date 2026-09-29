@@ -129,7 +129,9 @@ the environment overrides frontmatter, and Enterprise per-model effort caps
 clamp it. (This is Claude Code's subagent `effort:` field — distinct from Claude
 Managed Agents' `model.effort`.)
 
-**`xhigh` is a session lever, not a pin.** No agent here pins it, and there is
+**`xhigh` is a session lever, not a pin** — and so is Ultracode, which as of
+2.1.284 is a separate toggle in `/effort` rather than a level above `xhigh`
+(see the harness assumptions below). No agent here pins either, and there is
 no per-invocation effort override **at the point of spawning** — the Agent tool
 takes a `model` parameter, but there is no `effort` equivalent. So `/effort
 xhigh` before a high-risk review escalates the orchestrator and any *un-pinned*
@@ -173,11 +175,13 @@ The uncontrolled edges are the built-ins this repo doesn't define: the
 you define; for the built-ins the levers are `disallowedTools` and the guard
 below.
 
-The **platform default is contested**, so don't rely on it either way. The
-v2.1.219 CHANGELOG says subagents now nest to depth 3 by default (was 1) and
-that `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1` disables nesting; the sub-agents
-reference still says a subagent can't spawn subagents by default, with its
-version note covering only v2.1.172–v2.1.216. Set the variable explicitly if
+The **platform default is 3 — and still not something to rely on**. The docs
+and CHANGELOG now agree: the v2.1.219 CHANGELOG moved the default from 1 to 3,
+and the sub-agents reference, which used to say a subagent can't spawn by
+default, now says "3 layers deep by default". (Until 2.1.232 the two
+disagreed; that is resolved.) But the 2.1.284 build reads the default from a
+remotely served flag (`maxSubagentSpawnDepthFromGrowthBook`), so it can move
+without a release you'd notice. The env var outranks it. Set it explicitly if
 you depend on the depth:
 
 ```jsonc
@@ -195,7 +199,7 @@ it is a *symlink into this repo*, so editing it in place would put your personal
 environment into a tracked, public file. Replace it with a real copy (`cp -L`)
 before adding anything machine-specific.
 
-### Harness assumptions — Claude Code ≥ 2.1.218
+### Harness assumptions — Claude Code ≥ 2.1.218, re-checked against 2.1.284
 
 Version-specific, so stamped — everything in this subsection rots on a
 platform schedule:
@@ -206,9 +210,25 @@ platform schedule:
   effort*: below high it is back in the orchestrator's context. And since
   2.1.223 a bare call reuses the level typed last, so the level is not a
   stylistic choice — `plan-gates` names `high` at Gate 2 for both reasons.
+  (The current code-review page describes backgrounding without the
+  high-effort qualifier; unresolved, and moot here because Gate 2 names
+  `high` either way.)
 - Concurrent subagents are capped (`CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS`,
   default 20), and `--max-budget-usd` halts background subagents once the
-  budget is hit — worth setting for unattended runs.
+  budget is hit — worth setting for unattended runs. Both names are present in
+  the 2.1.284 build; neither appears in the current docs, so the default of 20
+  was not re-confirmed.
+- **Gate 4 names `/run`, not `/verify`.** No bundled skill registers `verify`
+  in 2.1.284; the harness looks for a *project* skill at
+  `.claude/skills/verify/SKILL.md` and otherwise points at the built-in that
+  launches and drives the app.
+- **Ultracode is its own toggle** — `/effort ultracode on|off`, separate from
+  the effort level. It is what brings dynamic workflows (the multi-agent
+  Workflow tool) into play, which is the thing `workflowSizeGuideline` in
+  [`settings.json`](./settings.json) advises on. `plan-gates` Phase 2
+  deliberately stays on plain `Agent` fan-out: its implementers, critics and
+  gates are a fixed, reviewable sequence, and a workflow script would put the
+  orchestration outside the plan file the approval stop was given.
 
 ### Model assumptions — Fable 5.1 / Opus 5.5 era, checked against Claude Code 2.1.284
 
@@ -494,6 +514,18 @@ exists (and silently does nothing if it doesn't — verified against Claude Code
 memory loader). Put anything you don't want public — employer conventions,
 internal tool/agent names, machine-specific paths — in that file. It lives in
 `~/.claude`, never in this repo, so it's impossible to commit by accident.
+
+**One setting can switch all of this off.** Claude Code now also reads
+`AGENTS.md` (checked against 2.1.284), and a project-instructions setting
+decides which instruction files load: `claude-md-or-agents-md` (the default —
+a project with no `CLAUDE.md` gets its `AGENTS.md` instead), `claude-md`,
+`claude-md-and-agents-md`, and `managed-only`. The first three leave this
+repo's global `CLAUDE.md` alone. **`managed-only` does not**: in the build's
+own words, "the project's and your own instruction files are dropped; the
+organization's managed CLAUDE.md and memory stay" — so under it the tier
+table, the gears and the hard rules silently stop loading, while the skills
+and agents still install. If the rules seem to have gone quiet on a managed
+machine, check that setting first.
 
 ## Repo hygiene
 
