@@ -18,8 +18,8 @@ and a clone reads the tag.
 
 ## [1.1.0] - 2026-09-29
 
-Minor: one new gate and one new script on the installed surface, nothing
-removed or renamed. The rest is fixes and a re-check of every version-stamped
+Minor: one new gate in `plan-gates` — the installed surface — plus one new
+release script (scripts aren't installed); nothing removed or renamed. The rest is fixes and a re-check of every version-stamped
 harness assumption against Claude Code 2.1.284.
 
 ### Added
@@ -79,7 +79,9 @@ harness assumption against Claude Code 2.1.284.
   authoritative. ([#8])
 - **`version-check.sh` counted matching lines, not occurrences**, so a
   single-line manifest with a nested `"version"` passed a *wrong* tag clean
-  and rejected the right one. ([#7])
+  and rejected the right one. The same change moved CI's tag trigger from
+  `v*` to `*`, so a non-`v` tag now fails loudly instead of running no CI.
+  ([#7])
 
 ## [1.0.0] - 2026-07-25
 

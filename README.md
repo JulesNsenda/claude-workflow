@@ -178,10 +178,12 @@ below.
 The **platform default is 3 — and still not something to rely on**. The docs
 and CHANGELOG now agree: the v2.1.219 CHANGELOG moved the default from 1 to 3,
 and the sub-agents reference, which used to say a subagent can't spawn by
-default, now says "3 layers deep by default". (Until 2.1.232 the two
-disagreed; that is resolved.) But the 2.1.284 build reads the default from a
+default, now says "3 layers deep by default". (Earlier the two disagreed;
+resolved as of 2.1.284.) But the 2.1.284 build reads the default from a
 remotely served flag (`maxSubagentSpawnDepthFromGrowthBook`), so it can move
-without a release you'd notice. The env var outranks it. Set it explicitly if
+without a release you'd notice. The env var is the documented override (the
+build's own refusal message says to raise it); its precedence over the remote
+flag was not separately tested. Set it explicitly if
 you depend on the depth:
 
 ```jsonc
@@ -218,7 +220,8 @@ platform schedule:
   budget is hit — worth setting for unattended runs. Both names are present in
   the 2.1.284 build; neither appears in the current docs, so the default of 20
   was not re-confirmed.
-- **Gate 4 names `/run`, not `/verify`.** No bundled skill registers `verify`
+- **Gate 4 names a project `verify` skill, else `/run`** — there is no built-in
+  `/verify`. No bundled skill registers `verify`
   in 2.1.284; the harness looks for a *project* skill at
   `.claude/skills/verify/SKILL.md` and otherwise points at the built-in that
   launches and drives the app.
