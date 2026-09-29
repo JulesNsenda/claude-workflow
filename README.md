@@ -43,7 +43,8 @@ matched to the risk.
   review of the *diff* (bugs live in code, not plans), a dedicated test pass
   that must cover every change, and an end-to-end runtime check. Nothing is
   done until it's green, covered, and observed working.
-- **Commit per plan-item**, and capture durable lessons to memory at the end.
+- **Commit per plan-item**, then a plain-language change summary for the PR
+  and durable lessons to memory at the end.
 - **Three gears — skip / light / full** — so rigor scales with risk instead of
   being bypassed.
 
@@ -96,7 +97,8 @@ flowchart TD
         Commit -->|"more items"| Impl
     end
 
-    Commit -->|"plan complete"| Capture["Capture learnings → memory"]
+    Commit -->|"plan complete"| Summary["Change summary —<br/>plan file + PR description"]
+    Summary --> Capture["Capture learnings → memory"]
     Skip --> Done([Done])
     Light --> Done
     Capture --> Done

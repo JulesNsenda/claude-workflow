@@ -8,7 +8,8 @@ description: >-
   "full workflow", or asks for the adversarial planning panel. Covers Phase 1
   (orient, draft, adversarial critics, plan file, approval stop) and Phase 2
   (implement on mid-tier agents, five gates — conformance, adversarial diff
-  review, tests, runtime, simplify — fix loop, commit per item).
+  review, tests, runtime, simplify — fix loop, commit per item, change
+  summary).
 # No `effort:` pin here, deliberately — see the README's effort section. A skill
 # effort field OVERRIDES the session level rather than flooring it, so pinning
 # `high` would clamp a deliberate `/effort xhigh` run down for the whole
@@ -75,8 +76,8 @@ reasoning transcripts**.
    addresses or consciously rejects it — and, appended at Gate 2,
    **Agent critiques considered — diff stage**: same format, separate corpus,
    sub-headed per plan-item and pass (`### <item> · pass N`) so the two stages
-   and the fix-loop iterations stay countable apart. Finally **Run stats**,
-   filled in at the end of Phase 2. Those sections, sized to the task — cover
+   and the fix-loop iterations stay countable apart. Finally **Summary** and
+   **Run stats**, both filled in at the end of Phase 2. Those sections, sized to the task — cover
    the substance, nothing beyond it, no filler or restatement. That is a
    brevity rule for prose, **not** for the per-finding rejection reasons step 4
    requires: never drop one of those to save space.
@@ -163,8 +164,33 @@ Models switch automatically per phase: the main session stays frontier
 10. **Commit per plan-item** as it clears all five gates — tick its checkbox in
    the same commit. Don't batch the whole plan into one commit; per-item
    commits bound derailment and make reverts cheap.
-11. **Fill in `## Run stats`** after the last plan-item commit, as its own
-   `chore(plan): record run stats` commit. The format and key list live in
+11. **Write the change summary** after the last plan-item commit. First bring
+   the plan file up to date if scope legitimately changed, so the summary is
+   written from the final record. Then add it to the plan file as
+   `## Summary`. Its reader is someone who was not in the session and has not
+   read the plan — a reviewer, a teammate picking the work up, you in three
+   months. The plan file usually stays local, so the same text is also what
+   goes out: reuse it as the PR description, or as the closing message when
+   there is no PR, so the two can't drift. Keep it short and in plain
+   language:
+   - **What changed and why** — one line per plan-item, named by its commit
+     subject (hashes don't survive a squash or rebase merge).
+   - **How to check it** — the Gate 4 runtime check, restated so someone else
+     can repeat it.
+   - **What was deliberately not done** — scope that was cut.
+   - **Risks and follow-ups** — anything known to be open.
+
+   **Scrub it before it leaves the machine.** Rejected critic findings stay in
+   **Agent critiques considered**, which is local on purpose — a rejected
+   security finding is a known weakness, written down. The outward text gives
+   at most a count ("N findings rejected, reasons in the plan file"), and
+   carries nothing client- or machine-specific. Point at the diff, the gates
+   and the run stats rather than restating them; a summary that retells the
+   diff is one nobody reads. Same bar as Gate 5: a competent junior should
+   understand the change from it without the plan file open.
+12. **Fill in `## Run stats`.** If the plan file is tracked, commit it together
+   with the summary as one `chore(plan): record summary and run stats` commit;
+   if `docs/` is ignored there is nothing to commit. The format and key list live in
    `scripts/run-stats.example.md` in the claude-workflow repo — read that file
    rather than reconstructing the keys from memory (the installer symlinks
    `skills/` and `agents/` but not `scripts/`, so open it from the clone).
@@ -173,13 +199,12 @@ Models switch automatically per phase: the main session stays frontier
    in the set — never round it toward looking good, and write `unknown` for
    anything you don't actually know rather than guessing. `unknown` drops the
    run from the ratios rather than counting as zero, so honesty costs nothing.
-12. **Capture what you learned.** Write durable decisions and gotchas to
-    memory; keep the plan file updated if scope legitimately changed so it
-    stays a faithful record. Keep an entry to three things — the decision,
+13. **Capture what you learned.** Write durable decisions and gotchas to
+    memory. Keep an entry to three things — the decision,
     the why, and the trap it avoids; the README covers the shape. What has
     proved worth keeping: architectural decisions and the
     alternatives rejected, non-obvious constraints discovered in the
     codebase, gotchas that cost real time, and conventions inferred from the
-    code. What stays out of an entry: what was implemented (the plan file and
-    git history already hold that), routine progress, or anything
+    code. What stays out of an entry: what was implemented (the summary, plan
+    file and git history already hold that), routine progress, or anything
     reconstructible from the diff.
