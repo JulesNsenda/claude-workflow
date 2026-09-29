@@ -124,8 +124,10 @@ Models switch automatically per phase: the main session stays frontier
    actual coverage. An untested or untestable path is a finding to resolve,
    not a step to skip.
 6. **Gate 4 · Runtime verification.** A green suite is not a working feature.
-   Exercise the affected flow end-to-end the way a user would (the built-in
-   `/verify` skill fits here) and observe actual behavior.
+   Exercise the affected flow end-to-end the way a user would and observe
+   actual behavior. A project `verify` skill, where the repo has one, is the
+   first choice; otherwise the built-in `/run` skill launches and drives the
+   app.
 7. **Gate 5 · Simplify — readability is part of done.** The code works; this
    gate is where it becomes code someone else can own. The bar: a competent
    junior developer should be able to read the change and say what it does
