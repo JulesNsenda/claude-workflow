@@ -16,6 +16,11 @@ and a clone reads the tag.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-09-29
+
+Minor: one new step in `plan-gates` Phase 2 — the installed surface —
+nothing removed or renamed.
+
 ### Added
 
 - **Change summary** step in [`plan-gates`](./skills/plan-gates/SKILL.md)
@@ -27,7 +32,7 @@ and a clone reads the tag.
   with the run stats, now as `chore(plan): record summary and run stats`.
   The global `CLAUDE.md` cadence rule's "outcome first when you finish" now
   says what that outcome contains, so every gear ends the same way. The
-  README diagram follows. ([#9])
+  README diagram follows. ([#9], [#11])
 
 ### Fixed
 
@@ -153,7 +158,8 @@ earlier release to upgrade from.
 
 Landed as pull requests [#1], [#2], [#3], and [#4].
 
-[Unreleased]: https://github.com/JulesNsenda/claude-workflow/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/JulesNsenda/claude-workflow/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/JulesNsenda/claude-workflow/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/JulesNsenda/claude-workflow/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/JulesNsenda/claude-workflow/releases/tag/v1.0.0
 [#1]: https://github.com/JulesNsenda/claude-workflow/pull/1
@@ -164,3 +170,4 @@ Landed as pull requests [#1], [#2], [#3], and [#4].
 [#7]: https://github.com/JulesNsenda/claude-workflow/pull/7
 [#8]: https://github.com/JulesNsenda/claude-workflow/pull/8
 [#9]: https://github.com/JulesNsenda/claude-workflow/issues/9
+[#11]: https://github.com/JulesNsenda/claude-workflow/pull/11
