@@ -57,7 +57,7 @@ gears exist.
 - While a subagent is working, wait silently — no status commentary until its
   report arrives. Cadence otherwise: one sentence before the first tool call,
   updates only on a finding or a change of direction, outcome first when you
-  finish.
+  finish — in plain language, what changed and how to check it.
 - Never spawn a subagent to re-check work you have already verified yourself —
   but every reviewer the gears table or `plan-gates` calls for (the diff
   critics, the dedicated test pass, runtime verification) is independent

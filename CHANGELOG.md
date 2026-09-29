@@ -16,6 +16,24 @@ and a clone reads the tag.
 
 ## [Unreleased]
 
+### Added
+
+- **Change summary** step in [`plan-gates`](./skills/plan-gates/SKILL.md)
+  Phase 2 (new step 11): after the last plan-item commit, a short
+  plain-language `## Summary` in the plan file (what changed and why per
+  item, how to check it, scope cut, risks and follow-ups), reused as the PR
+  description. Rejected critic findings stay local; the outward text carries
+  at most a count. Where the plan file is tracked it is committed together
+  with the run stats, now as `chore(plan): record summary and run stats`.
+  The global `CLAUDE.md` cadence rule's "outcome first when you finish" now
+  says what that outcome contains, so every gear ends the same way. The
+  README diagram follows. ([#9])
+
+### Fixed
+
+- `.claude/CLAUDE.md` pointed at "`plan-gates` step 9" for run stats, which
+  had since moved; it now names the step rather than a number.
+
 ## [1.1.0] - 2026-09-29
 
 Minor: one new gate in `plan-gates` — the installed surface — plus one new
@@ -145,3 +163,4 @@ Landed as pull requests [#1], [#2], [#3], and [#4].
 [#6]: https://github.com/JulesNsenda/claude-workflow/pull/6
 [#7]: https://github.com/JulesNsenda/claude-workflow/pull/7
 [#8]: https://github.com/JulesNsenda/claude-workflow/pull/8
+[#9]: https://github.com/JulesNsenda/claude-workflow/issues/9
