@@ -189,34 +189,37 @@ say "settings.json:"
 # (e.g. into a dotfiles repo) is the user's own choice and is treated like a real
 # file. A dangling symlink holds no data, but its target may only be unmounted
 # right now, so the link itself is backed up before re-linking.
+settings_target="$CLAUDE_DIR/settings.json"
+settings_repo="$REPO_DIR/settings.json"
+
 drift_report() {
   # Indent the drift script's output like info(). Exit codes 1 (drift) and 2 (not
   # checked) are normal, so nothing here may trip `set -e`. Run as `sh` on
   # purpose: the script is POSIX and CI runs it that way.
   local out line
-  out="$(sh "$REPO_DIR/scripts/settings-drift.sh" "$REPO_DIR/settings.json" "$CLAUDE_DIR/settings.json" 2>&1)" || true
+  out="$(sh "$REPO_DIR/scripts/settings-drift.sh" "$settings_repo" "$settings_target" 2>&1)" || true
   if [[ -n "$out" ]]; then
     while IFS= read -r line; do info "$line"; done <<< "$out"
   fi
   # %q so a path with spaces or quotes still pastes as one word.
-  info "re-run after a git pull: sh $(printf '%q %q %q' "$REPO_DIR/scripts/settings-drift.sh" "$REPO_DIR/settings.json" "$CLAUDE_DIR/settings.json")"
+  info "re-run after a git pull: sh $(printf '%q %q %q' "$REPO_DIR/scripts/settings-drift.sh" "$settings_repo" "$settings_target")"
 }
 
-if [[ -L "$CLAUDE_DIR/settings.json" && ! -e "$CLAUDE_DIR/settings.json" ]]; then
+if [[ -L "$settings_target" && ! -e "$settings_target" ]]; then
   # Dangling. (A dry run leaves it to link(), which reports "would back up + link".)
   if [[ $DRY_RUN -eq 0 ]]; then
-    mv "$CLAUDE_DIR/settings.json" "$CLAUDE_DIR/settings.json.backup.${STAMP}"
+    mv "$settings_target" "$settings_target.backup.${STAMP}"
     info "backed up dangling symlink -> settings.json.backup.${STAMP}"
   fi
-  link "$REPO_DIR/settings.json" "$CLAUDE_DIR/settings.json"
-elif [[ -L "$CLAUDE_DIR/settings.json" && ! "$CLAUDE_DIR/settings.json" -ef "$REPO_DIR/settings.json" ]]; then
-  info "skip (settings.json links elsewhere and is left as is - the repo's permission rules are NOT active unless that file has $REPO_DIR/settings.json merged into it)"
+  link "$settings_repo" "$settings_target"
+elif [[ -L "$settings_target" && ! "$settings_target" -ef "$settings_repo" ]]; then
+  info "skip (settings.json links elsewhere and is left as is - the repo's permission rules are NOT active unless that file has $settings_repo merged into it)"
   drift_report
-elif [[ ! -L "$CLAUDE_DIR/settings.json" && -e "$CLAUDE_DIR/settings.json" ]]; then
-  info "skip (real settings.json exists — the repo's permission rules are NOT active until you merge $REPO_DIR/settings.json into it)"
+elif [[ ! -L "$settings_target" && -e "$settings_target" ]]; then
+  info "skip (real settings.json exists — the repo's permission rules are NOT active until you merge $settings_repo into it)"
   drift_report
 else
-  link "$REPO_DIR/settings.json" "$CLAUDE_DIR/settings.json"
+  link "$settings_repo" "$settings_target"
 fi
 
 say ""

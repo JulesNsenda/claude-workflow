@@ -50,9 +50,11 @@ function Info($msg) { Write-Host "  $msg" }
 
 function Get-LinkTarget($path) {
   $item = Get-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
-  if (-not $item) {
+  if (-not $item -and (Test-IsLink $path)) {
     # Get-Item can fail on a dangling link (Windows PowerShell 5.1 tries to
     # follow it); listing the parent directory returns the link entry itself.
+    # Only worth doing for a path that IS a link: Get-Item also returns nothing
+    # for a missing one, and re-listing the directory for that is wasted work.
     $leaf = Split-Path $path -Leaf
     $item = Get-ChildItem -LiteralPath (Split-Path -Parent $path) -Force -ErrorAction SilentlyContinue |
       Where-Object { $_.Name -ieq $leaf } | Select-Object -First 1
@@ -88,7 +90,8 @@ function Test-IsDangling($path) {
 
 function Move-LinkItem($from, $to) {
   # Renames a link itself, file or directory flavoured; Move-Item would try to
-  # resolve a missing target.
+  # resolve a missing target. Every backup and restore here is a rename within
+  # one directory, so it serves real files and directories too.
   if ([System.IO.File]::GetAttributes($from) -band [System.IO.FileAttributes]::Directory) { [System.IO.Directory]::Move($from, $to) }
   else { [System.IO.File]::Move($from, $to) }
 }
@@ -128,7 +131,6 @@ function New-Link {
   # Stash whatever is at the target: delete a stale link, back up real data.
   $backup = $null
   $backupLabel = 'existing'
-  $backupIsLink = $false
   if ($BackupDangling -and (Test-IsDangling $Target)) {
     $backup = "$Target.backup.$Stamp"
     try { Move-LinkItem $Target $backup }
@@ -137,12 +139,11 @@ function New-Link {
       return $true
     }
     $backupLabel = 'dangling symlink'
-    $backupIsLink = $true
   } elseif (Get-LinkTarget $Target) {
     (Get-Item -LiteralPath $Target -Force).Delete()
   } elseif (Test-Path -LiteralPath $Target) {
     $backup = "$Target.backup.$Stamp"
-    Move-Item -LiteralPath $Target -Destination $backup
+    Move-LinkItem $Target $backup
   }
 
   # Prefer a real symlink; fall back to a junction for directories only.
@@ -168,10 +169,7 @@ function New-Link {
       return $true
     }
     # Files: no elevation-free link that survives `git pull`. Restore and defer.
-    if ($backup) {
-      if ($backupIsLink) { Move-LinkItem $backup $Target }
-      else { Move-Item -LiteralPath $backup -Destination $Target }
-    }
+    if ($backup) { Move-LinkItem $backup $Target }
     Info "DEFERRED (needs elevation): $shortTarget"
     $script:Deferred += $shortTarget
     return $false
@@ -211,10 +209,10 @@ function Remove-Link {
     $newest = $backups[-1]
     if ($DryRun) { Info "would restore backup: $($newest.Name)" }
     else {
-      # A backed-up dangling link must be renamed as a link; Move-Item would
-      # try to resolve its missing target.
-      if (Test-IsLink $newest.FullName) { Move-LinkItem $newest.FullName $Target }
-      else { Move-Item -LiteralPath $newest.FullName -Destination $Target }
+      # Move-LinkItem for links and real data alike: a backed-up dangling link
+      # must be renamed as a link (Move-Item would try to resolve its missing
+      # target), and it renames a real file or directory just as well.
+      Move-LinkItem $newest.FullName $Target
       Info "restored backup: $($newest.Name)"
     }
   }
@@ -302,19 +300,19 @@ function Invoke-DriftReport {
   Info ("re-run after a git pull: & " + (& $q $hostExe) + " -NoProfile -ExecutionPolicy Bypass -File " + (& $q (Join-Path $RepoDir 'scripts\settings-drift.ps1')) + " -Repo " + (& $q $settingsRepo) + " -Live " + (& $q $settingsTarget))
 }
 
-$settingsResolved = $null
-$settingsIsLink = Test-IsLink $settingsTarget
-if ($settingsIsLink) { $settingsResolved = Get-ResolvedLinkTarget $settingsTarget }
-if ($settingsIsLink -and -not $settingsResolved) {
+$settingsResolved = Get-ResolvedLinkTarget $settingsTarget   # $null for a non-link
+if ((Test-IsLink $settingsTarget) -and -not $settingsResolved) {
   # A reparse point whose text can't be read: not provably dangling, not ours.
   Info "skip (settings.json is a link this installer cannot read - left as is)"
-} elseif ($settingsResolved -and (Test-LinksTo $settingsTarget $settingsRepo)) {
-  New-Link -Source $settingsRepo -Target $settingsTarget | Out-Null   # reports "already linked"
-} elseif ($settingsResolved -and (Test-IsDangling $settingsTarget)) {
-  New-Link -Source $settingsRepo -Target $settingsTarget -BackupDangling | Out-Null
 } elseif ($settingsResolved) {
-  Info "skip (settings.json links elsewhere and is left as is - the repo's permission rules are NOT active unless that file has $settingsRepo merged into it)"
-  Invoke-DriftReport
+  if ($settingsResolved -ieq [System.IO.Path]::GetFullPath($settingsRepo)) {
+    New-Link -Source $settingsRepo -Target $settingsTarget | Out-Null   # reports "already linked"
+  } elseif (-not (Test-Path -LiteralPath $settingsResolved)) {
+    New-Link -Source $settingsRepo -Target $settingsTarget -BackupDangling | Out-Null
+  } else {
+    Info "skip (settings.json links elsewhere and is left as is - the repo's permission rules are NOT active unless that file has $settingsRepo merged into it)"
+    Invoke-DriftReport
+  }
 } elseif (Test-Path -LiteralPath $settingsTarget) {
   Info "skip (real settings.json exists - the repo's permission rules are NOT active until you merge $settingsRepo into it)"
   Invoke-DriftReport

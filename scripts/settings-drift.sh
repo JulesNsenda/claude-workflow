@@ -67,11 +67,11 @@ command -v "$jq_bin" >/dev/null 2>&1 || not_checked "jq not found"
 # --- repo side: parse, then require something to compare ---
 # stderr is discarded everywhere below: jq's own message can quote file content.
 # shellcheck disable=SC2016 # jq program, single-quoted on purpose
-repo_info=$("$jq_bin" -n -r --slurpfile r "$repo" \
+# -j: raw output with no trailing newline, so jq.exe's CRLF never appears here.
+repo_info=$("$jq_bin" -n -j --slurpfile r "$repo" \
   'if ($r | length) == 1 and ($r[0] | type) == "object"
    then ($r[0] | del(."$schema") | length | tostring)
    else "0" end' 2>/dev/null) || not_checked "repo settings.json could not be parsed by jq"
-repo_info=$(printf '%s' "$repo_info" | tr -d '\r')
 [ "$repo_info" != "0" ] || not_checked "repo settings.json has nothing to compare"
 
 # --- live side ---
@@ -80,18 +80,17 @@ repo_info=$(printf '%s' "$repo_info" | tr -d '\r')
 [ -f "$live" ] || not_checked "live settings.json is not a regular file"
 
 # shellcheck disable=SC2016 # jq program, single-quoted on purpose
-live_info=$("$jq_bin" -n -r --slurpfile l "$live" \
-  '"\($l | length) \(if ($l | length) == 1 then ($l[0] | type) else "-" end)"' \
+live_info=$("$jq_bin" -n -j --slurpfile l "$live" \
+  'if ($l | length) != 1 then "n" else ($l[0] | type) end' \
   2>/dev/null) || not_checked "live settings.json could not be parsed by jq"
-live_info=$(printf '%s' "$live_info" | tr -d '\r')
 
 # --slurpfile yields one element per JSON value: zero is empty/whitespace, two or
-# more is a multi-document file. Either is refused rather than guessed at.
+# more is a multi-document file ("n"). Either is refused rather than guessed at.
 case $live_info in
-  "1 "*) ;;
-  *) not_checked "live settings.json is empty or holds more than one JSON value" ;;
+  object) ;;
+  n) not_checked "live settings.json is empty or holds more than one JSON value" ;;
+  *) not_checked "live settings.json is not a JSON object" ;;
 esac
-[ "$live_info" = "1 object" ] || not_checked "live settings.json is not a JSON object"
 
 clean_line='settings: no repo setting missing or different (live-only settings not checked)'
 
@@ -115,8 +114,8 @@ out=$("$jq_bin" -n -r --slurpfile r "$repo" --slurpfile l "$live" --arg clean "$
       else
         . as $o
         | keys_unsorted[] as $k
-        | ($ex and ($l | type) == "object" and ($l | has($k))) as $h
-        | $o[$k] | cmp($p + [$k]; $h; if $h then $l[$k] else null end)
+        | ($ex and ($l | has($k))) as $h
+        | $o[$k] | cmp($p + [$k]; $h; $l[$k])
       end
     elif type == "array" then
       if $ex and ($l | type) != "array" then
@@ -139,7 +138,7 @@ out=$("$jq_bin" -n -r --slurpfile r "$repo" --slurpfile l "$live" --arg clean "$
 
 # jq.exe on Windows may emit CRLF; a real CR can never appear in the output
 # because every value is JSON-escaped.
-out=$(printf '%s\n' "$out" | tr -d '\r')
+out=$(printf '%s' "$out" | tr -d '\r')
 printf '%s\n' "$out"
 
 [ "$out" != "$clean_line" ] || exit 0

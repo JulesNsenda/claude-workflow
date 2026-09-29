@@ -726,22 +726,20 @@ jobs:
 
             # The exit code is not stored: it is implied by the expected output
             # (fixtures README), so a fixture cannot drift from its own code.
-            if [ "$(tr -d '\r' < "$exp")" = "$clean" ]; then want=0
-            elif grep -qE '^settings drift: (missing|differs) ' "$exp"; then want=1
-            elif grep -q '^settings drift: not checked' "$exp"; then want=2
+            tr -d '\r' < "$exp" > "$RUNNER_TEMP/drift.want"
+            if [ "$(cat "$RUNNER_TEMP/drift.want")" = "$clean" ]; then want=0
+            elif grep -qE '^settings drift: (missing|differs) ' "$RUNNER_TEMP/drift.want"; then want=1
+            elif grep -q '^settings drift: not checked' "$RUNNER_TEMP/drift.want"; then want=2
             else echo "::error::$name: cannot derive an exit code from $exp"; exit 1
             fi
 
-            # Note the `if`: steps run as `bash -e`, so a bare command that
-            # exits 1 or 2 (both normal here) would abort the step.
-            if sh scripts/settings-drift.sh "$dir/repo.json" "$dir/live.json" \
-                 > "$RUNNER_TEMP/drift.out" 2> "$RUNNER_TEMP/drift.err"; then
-              rc=0
-            else
-              rc=$?
-            fi
+            # Note the `|| rc=$?`: steps run as `bash -e`, so a bare command that
+            # exits 1 or 2 (both normal here) would abort the step; a command
+            # on the left of `||` is exempt from -e.
+            rc=0
+            sh scripts/settings-drift.sh "$dir/repo.json" "$dir/live.json" \
+              > "$RUNNER_TEMP/drift.out" 2> "$RUNNER_TEMP/drift.err" || rc=$?
             tr -d '\r' < "$RUNNER_TEMP/drift.out" > "$RUNNER_TEMP/drift.got"
-            tr -d '\r' < "$exp" > "$RUNNER_TEMP/drift.want"
 
             if ! diff -u "$RUNNER_TEMP/drift.want" "$RUNNER_TEMP/drift.got"; then
               echo "::error::$name: output differs from $exp (diff above)"; exit 1
@@ -771,11 +769,8 @@ jobs:
           # CLAUDE_WORKFLOW_JQ is the seam: the runner ships jq, so removing it
           # from PATH is not an option. Exact line and exit 2, both asserted.
           fx=scripts/settings-drift-fixtures/clean
-          if out=$(CLAUDE_WORKFLOW_JQ=/nonexistent sh scripts/settings-drift.sh "$fx/repo.json" "$fx/live.json" 2>&1); then
-            rc=0
-          else
-            rc=$?
-          fi
+          rc=0
+          out=$(CLAUDE_WORKFLOW_JQ=/nonexistent sh scripts/settings-drift.sh "$fx/repo.json" "$fx/live.json" 2>&1) || rc=$?
           [ "$out" = 'settings drift: not checked - jq not found' ] || {
             echo "::error::jq-absent output was not the exact not-checked line"; printf '%s\n' "$out"; exit 1
           }
@@ -810,12 +805,9 @@ jobs:
           EOF
           chmod +x "$shim"
           fx=scripts/settings-drift-fixtures/clean
-          if CLAUDE_WORKFLOW_JQ="$shim" sh scripts/settings-drift.sh "$fx/repo.json" "$fx/live.json" \
-               > "$RUNNER_TEMP/shim.out" 2> "$RUNNER_TEMP/shim.err"; then
-            rc=0
-          else
-            rc=$?
-          fi
+          rc=0
+          CLAUDE_WORKFLOW_JQ="$shim" sh scripts/settings-drift.sh "$fx/repo.json" "$fx/live.json" \
+            > "$RUNNER_TEMP/shim.out" 2> "$RUNNER_TEMP/shim.err" || rc=$?
           out=$(cat "$RUNNER_TEMP/shim.out")
           [ "$out" = 'settings drift: not checked - comparison failed' ] || {
             echo "::error::failed-comparison output was not the exact not-checked line"; printf '%s\n' "$out"; exit 1
@@ -833,11 +825,8 @@ jobs:
         run: |
           for args in '' 'a' 'a b c'; do
             # shellcheck disable=SC2086 # deliberate word splitting: '' means no args
-            if out=$(sh scripts/settings-drift.sh $args 2>&1); then
-              rc=0
-            else
-              rc=$?
-            fi
+            rc=0
+            out=$(sh scripts/settings-drift.sh $args 2>&1) || rc=$?
             printf '%s\n' "$out" | grep -qF 'usage: settings-drift.sh' || {
               echo "::error::no usage message with [$args]"; printf '%s\n' "$out"; exit 1
             }
@@ -858,17 +847,20 @@ jobs:
           before=$(sha256sum "$fh/.claude/settings.json")
           find "$fh" | sort > "$RUNNER_TEMP/drift-tree.before"
 
-          if HOME="$fh" bash install.sh --dry-run > "$RUNNER_TEMP/drift-install.out" 2>&1; then
-            rc=0
-          else
-            rc=$?
-          fi
-          cat "$RUNNER_TEMP/drift-install.out"
+          # Runs the installer against the scratch HOME, shows its output, keeps
+          # it for the assertions and requires exit 0. `|| rc=$?` keeps a
+          # failure from aborting under `bash -e` before the message is printed.
+          run_install() {
+            local rc=0
+            HOME="$fh" bash install.sh "$@" > "$RUNNER_TEMP/drift-install.out" 2>&1 || rc=$?
+            cat "$RUNNER_TEMP/drift-install.out"
+            [ "$rc" -eq 0 ] || { echo "::error::${kind:+$kind: }install.sh${*:+ $*} exited $rc"; exit 1; }
+          }
+          run_install --dry-run
 
-          # Exit 0 AND the later sections AND the final line: a drift script
-          # that aborted the installer half-way (set -e on its exit 1) would
-          # fail here on any one of them.
-          [ "$rc" -eq 0 ] || { echo "::error::install.sh --dry-run exited $rc"; exit 1; }
+          # Exit 0 (run_install) AND the later sections AND the final line: a
+          # drift script that aborted the installer half-way (set -e on its
+          # exit 1) would fail here on any one of them.
           for want in \
             '  settings drift: missing ["permissions","deny"] "Read(.env)"' \
             'agents:' \
@@ -902,14 +894,17 @@ jobs:
           ln -s "$dot/settings.json" "$fh/.claude/settings.json"
           before=$(sha256sum "$dot/settings.json")
 
-          if HOME="$fh" bash install.sh > "$RUNNER_TEMP/drift-install.out" 2>&1; then
-            rc=0
-          else
-            rc=$?
-          fi
-          cat "$RUNNER_TEMP/drift-install.out"
+          # Runs the installer against the scratch HOME, shows its output, keeps
+          # it for the assertions and requires exit 0. `|| rc=$?` keeps a
+          # failure from aborting under `bash -e` before the message is printed.
+          run_install() {
+            local rc=0
+            HOME="$fh" bash install.sh "$@" > "$RUNNER_TEMP/drift-install.out" 2>&1 || rc=$?
+            cat "$RUNNER_TEMP/drift-install.out"
+            [ "$rc" -eq 0 ] || { echo "::error::${kind:+$kind: }install.sh${*:+ $*} exited $rc"; exit 1; }
+          }
+          run_install
 
-          [ "$rc" -eq 0 ] || { echo "::error::install.sh exited $rc"; exit 1; }
           for want in \
             'links elsewhere and is left as is' \
             '  settings drift: missing ["permissions","deny"] "Read(.env)"' \
@@ -940,6 +935,16 @@ jobs:
           # or a backup appear). Each case asserts the printed line, that no
           # drift report ran (an own link is not a hand-merged file), and the
           # resulting link state.
+
+          # Runs the installer against the scratch HOME, shows its output, keeps
+          # it for the assertions and requires exit 0. `|| rc=$?` keeps a
+          # failure from aborting under `bash -e` before the message is printed.
+          run_install() {
+            local rc=0
+            HOME="$fh" bash install.sh "$@" > "$RUNNER_TEMP/drift-install.out" 2>&1 || rc=$?
+            cat "$RUNNER_TEMP/drift-install.out"
+            [ "$rc" -eq 0 ] || { echo "::error::${kind:+$kind: }install.sh${*:+ $*} exited $rc"; exit 1; }
+          }
           for kind in absolute relative; do
             fh="$RUNNER_TEMP/drift-home-own-$kind"
             rm -rf "$fh"; mkdir -p "$fh/.claude"
@@ -950,14 +955,8 @@ jobs:
             fi
             ln -s "$want_link" "$fh/.claude/settings.json"
 
-            if HOME="$fh" bash install.sh > "$RUNNER_TEMP/drift-install.out" 2>&1; then
-              rc=0
-            else
-              rc=$?
-            fi
-            cat "$RUNNER_TEMP/drift-install.out"
+            run_install
 
-            [ "$rc" -eq 0 ] || { echo "::error::$kind: install.sh exited $rc"; exit 1; }
             grep -qxF '  ok (already linked): ~/.claude/settings.json' "$RUNNER_TEMP/drift-install.out" || {
               echo "::error::$kind: an own settings.json link was not recognised as already linked"; exit 1
             }
@@ -990,14 +989,17 @@ jobs:
             echo "::error::the dangling fixture is not dangling"; exit 1
           fi
 
-          if HOME="$fh" bash install.sh > "$RUNNER_TEMP/drift-install.out" 2>&1; then
-            rc=0
-          else
-            rc=$?
-          fi
-          cat "$RUNNER_TEMP/drift-install.out"
+          # Runs the installer against the scratch HOME, shows its output, keeps
+          # it for the assertions and requires exit 0. `|| rc=$?` keeps a
+          # failure from aborting under `bash -e` before the message is printed.
+          run_install() {
+            local rc=0
+            HOME="$fh" bash install.sh "$@" > "$RUNNER_TEMP/drift-install.out" 2>&1 || rc=$?
+            cat "$RUNNER_TEMP/drift-install.out"
+            [ "$rc" -eq 0 ] || { echo "::error::${kind:+$kind: }install.sh${*:+ $*} exited $rc"; exit 1; }
+          }
+          run_install
 
-          [ "$rc" -eq 0 ] || { echo "::error::install.sh exited $rc"; exit 1; }
           grep -qE '^  backed up dangling symlink -> settings\.json\.backup\.[0-9]+$' "$RUNNER_TEMP/drift-install.out" || {
             echo "::error::no 'backed up dangling symlink' line"; exit 1
           }
@@ -1031,15 +1033,18 @@ jobs:
           ls "$fh/.claude"/settings.json.backup.* >/dev/null 2>&1 || {
             echo "::error::no backup left over from the previous step"; exit 1
           }
-          if HOME="$fh" bash install.sh --uninstall > "$RUNNER_TEMP/drift-uninstall.out" 2>&1; then
-            rc=0
-          else
-            rc=$?
-          fi
-          cat "$RUNNER_TEMP/drift-uninstall.out"
+          # Runs the installer against the scratch HOME, shows its output, keeps
+          # it for the assertions and requires exit 0. `|| rc=$?` keeps a
+          # failure from aborting under `bash -e` before the message is printed.
+          run_install() {
+            local rc=0
+            HOME="$fh" bash install.sh "$@" > "$RUNNER_TEMP/drift-install.out" 2>&1 || rc=$?
+            cat "$RUNNER_TEMP/drift-install.out"
+            [ "$rc" -eq 0 ] || { echo "::error::${kind:+$kind: }install.sh${*:+ $*} exited $rc"; exit 1; }
+          }
+          run_install --uninstall
 
-          [ "$rc" -eq 0 ] || { echo "::error::install.sh --uninstall exited $rc"; exit 1; }
-          grep -qE '^  restored backup: settings\.json\.backup\.[0-9]+$' "$RUNNER_TEMP/drift-uninstall.out" || {
+          grep -qE '^  restored backup: settings\.json\.backup\.[0-9]+$' "$RUNNER_TEMP/drift-install.out" || {
             echo "::error::no 'restored backup' line for settings.json"; exit 1
           }
           [ -L "$fh/.claude/settings.json" ] && [ "$(readlink "$fh/.claude/settings.json")" = "$gone" ] || {
@@ -1114,9 +1119,8 @@ jobs:
             $lines = @(& $exe -NoProfile -File scripts/settings-drift.ps1 -Repo (Join-Path $dir.FullName 'repo.json') -Live (Join-Path $dir.FullName 'live.json') 2>$err)
             $rc = $LASTEXITCODE
             $got = (($lines | ForEach-Object { "$_" -replace "`r", '' }) -join "`n") + "`n"
-            $errText = ''
-            if (Test-Path -LiteralPath $err) { $errText = Get-Content -Raw -LiteralPath $err }
-            if ($null -eq $errText) { $errText = '' }
+            # A missing or empty stderr file reads as nothing (or $null); "$()" makes it ''.
+            $errText = "$(Get-Content -Raw -LiteralPath $err -ErrorAction SilentlyContinue)"
 
             if ($got -cne $want) {
               Write-Host "--- expected ($exp)"; Write-Host $want

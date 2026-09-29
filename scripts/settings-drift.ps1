@@ -74,10 +74,24 @@ function Get-JType($v) {
   return 'string'
 }
 
+# Case-exact property lookup: PSObject.Properties iterated and compared ordinally
+# (dotted access and -eq are case-insensitive). Returns @{ Found; Value }.
+function Find-JProperty($obj, [string]$name) {
+  foreach ($p in $obj.PSObject.Properties) {
+    if ([string]::Equals([string]$p.Name, $name, [System.StringComparison]::Ordinal)) { return @{ Found = $true; Value = $p.Value } }
+  }
+  return @{ Found = $false; Value = $null }
+}
+
+# Anything jq's tojson escapes: control chars, quote, backslash, DEL.
+$script:needsEscape = [regex]'[\x00-\x1f"\\\x7f]'
+
 # jq-compatible string escaping: \" \\ \n \t \r \b \f, other control chars as
 # \u00xx lowercase hex, DEL (0x7f) as \u007f (jq escapes it too), everything else
 # literal.
 function ConvertTo-JString([string]$s) {
+  # Fast path: most strings need no escaping, so skip the per-character loop.
+  if (-not $script:needsEscape.IsMatch($s)) { return '"' + $s + '"' }
   $sb = New-Object System.Text.StringBuilder
   [void]$sb.Append('"')
   foreach ($c in $s.ToCharArray()) {
@@ -131,9 +145,7 @@ function ConvertTo-Canon($v) {
       $names.Sort([System.StringComparer]::Ordinal)
       $parts = New-Object 'System.Collections.Generic.List[string]'
       foreach ($n in $names) {
-        foreach ($p in $v.PSObject.Properties) {
-          if ([string]::Equals([string]$p.Name, $n, [System.StringComparison]::Ordinal)) { $parts.Add((ConvertTo-JString $n) + ':' + (ConvertTo-Canon $p.Value)); break }
-        }
+        $parts.Add((ConvertTo-JString $n) + ':' + (ConvertTo-Canon (Find-JProperty $v $n).Value))
       }
       return '{' + ($parts -join ',') + '}'
     }
@@ -151,9 +163,9 @@ function Split-JsonValues([string]$t) {
   while ($true) {
     while ($i -lt $n -and [char]::IsWhiteSpace($t[$i])) { $i++ }
     if ($i -ge $n) { break }
+    $start = $i
     if ($t[$i] -ne '{' -and $t[$i] -ne '[') {
       # A scalar value: cut it at its end so `"a" "b"` is two values, as jq sees it.
-      $start = $i
       if ($t[$i] -eq '"') {
         $i++
         while ($i -lt $n -and $t[$i] -ne '"') { if ($t[$i] -eq '\') { $i++ }; $i++ }
@@ -165,7 +177,6 @@ function Split-JsonValues([string]$t) {
       $vals.Add($t.Substring($start, $i - $start))
       continue
     }
-    $start = $i
     $depth = 0
     $inStr = $false
     $esc = $false
@@ -193,19 +204,19 @@ function Split-JsonValues([string]$t) {
   return , $vals
 }
 
-# Read and parse a settings file. Returns a hashtable: State is ok | empty |
-# multi | error; for ok, Value is the parsed root and IsObject says whether the
+# Read and parse a settings file. Returns a hashtable: State is ok | notone |
+# error; notone means not exactly one JSON value (none - empty or whitespace-only -
+# or several). For ok, Value is the parsed root and IsObject says whether the
 # root is a JSON object (decided from the text - 5.1 unrolls a root array).
 function Read-Settings([string]$path) {
   try {
     $text = Get-Content -LiteralPath $path -Raw -Encoding UTF8
-    if ([string]::IsNullOrWhiteSpace($text)) { return @{ State = 'empty' } }
     $vals = Split-JsonValues $text
     $parsed = New-Object 'System.Collections.Generic.List[object]'
     foreach ($raw in $vals) {
       $parsed.Add((ConvertFrom-Json -InputObject $raw -ErrorAction Stop))
     }
-    if ($vals.Count -ne 1) { return @{ State = 'multi' } }
+    if ($vals.Count -ne 1) { return @{ State = 'notone' } }
     return @{ State = 'ok'; Value = $parsed[0]; IsObject = ([string]::Equals([string]$vals[0][0], '{', [System.StringComparison]::Ordinal)) }
   } catch {
     # Never the exception text: it can quote live content.
@@ -218,48 +229,46 @@ $script:drift = New-Object 'System.Collections.Generic.List[string]'
 # Walk the repo value $rv against the live value $lv (meaningful only when $ex,
 # i.e. the live side exists at this path). $path is a string[] of keys.
 function Compare-Node($rv, [bool]$ex, $lv, [string[]]$path) {
-  $p = ConvertTo-Canon $path
   $lt = Get-JType $lv
+  # The display path is only built in the branches that emit a drift line.
   switch (Get-JType $rv) {
     'object' {
       if ($ex -and $lt -ne 'object') {
-        $script:drift.Add("settings drift: differs $p repo object, live $lt")
+        $script:drift.Add("settings drift: differs $(ConvertTo-Canon $path) repo object, live $lt")
       } elseif (-not $ex -and @($rv.PSObject.Properties).Count -eq 0) {
-        $script:drift.Add("settings drift: missing $p {}")
+        $script:drift.Add("settings drift: missing $(ConvertTo-Canon $path) {}")
       } else {
         foreach ($prop in $rv.PSObject.Properties) {
           $k = [string]$prop.Name
-          $h = $false
-          $child = $null
-          if ($ex -and $lt -eq 'object') {
-            foreach ($lp in $lv.PSObject.Properties) {
-              if ([string]::Equals([string]$lp.Name, $k, [System.StringComparison]::Ordinal)) { $h = $true; $child = $lp.Value; break }
-            }
-          }
-          Compare-Node $prop.Value $h $child ([string[]]($path + $k))
+          # The root is walked here too; only there is $schema not a setting.
+          if ($path.Count -eq 0 -and [string]::Equals($k, '$schema', [System.StringComparison]::Ordinal)) { continue }
+          # Reaching here with $ex means the live side is an object.
+          $f = @{ Found = $false; Value = $null }
+          if ($ex) { $f = Find-JProperty $lv $k }
+          Compare-Node $prop.Value $f.Found $f.Value ([string[]]($path + $k))
         }
       }
     }
     'array' {
       if ($ex -and $lt -ne 'array') {
-        $script:drift.Add("settings drift: differs $p repo array, live $lt")
+        $script:drift.Add("settings drift: differs $(ConvertTo-Canon $path) repo array, live $lt")
       } elseif (-not $ex -and $rv.Count -eq 0) {
-        $script:drift.Add("settings drift: missing $p []")
+        $script:drift.Add("settings drift: missing $(ConvertTo-Canon $path) []")
       } else {
         $have = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
         if ($ex) { foreach ($x in $lv) { [void]$have.Add((ConvertTo-Canon $x)) } }
         foreach ($e in $rv) {
           $c = ConvertTo-Canon $e
-          if (-not $have.Contains($c)) { $script:drift.Add("settings drift: missing $p $c") }
+          if (-not $have.Contains($c)) { $script:drift.Add("settings drift: missing $(ConvertTo-Canon $path) $c") }
         }
       }
     }
     default {
       $c = ConvertTo-Canon $rv
       if (-not $ex) {
-        $script:drift.Add("settings drift: missing $p $c")
+        $script:drift.Add("settings drift: missing $(ConvertTo-Canon $path) $c")
       } elseif (-not [string]::Equals($c, (ConvertTo-Canon $lv), [System.StringComparison]::Ordinal)) {
-        $script:drift.Add("settings drift: differs $p repo $c, live $lt")
+        $script:drift.Add("settings drift: differs $(ConvertTo-Canon $path) repo $c, live $lt")
       }
     }
   }
@@ -286,14 +295,14 @@ try {
   # --- live side ---
   # Get-Item -Force sees a dangling link (Test-Path on 5.1 may not follow one), so the
   # target is tested through .NET, which does follow: a dangling link is "not found",
-  # as with sh. A link to a pipe/device would hang Get-Content, so after the Leaf check
-  # only a FileInfo outside the \\.\ and \\?\ device namespaces is read.
+  # as with sh. A link to a pipe/device would hang Get-Content, so only a FileInfo
+  # that File.Exists confirms (a file-type link to a directory is not one) and that
+  # sits outside the \\.\ and \\?\ device namespaces is read.
   $liveItem = Get-Item -LiteralPath $Live -Force -ErrorAction SilentlyContinue
   if ($null -eq $liveItem -or -not ([System.IO.File]::Exists($liveItem.FullName) -or [System.IO.Directory]::Exists($liveItem.FullName))) {
     Stop-NotChecked 'live settings.json not found'
   }
-  if (-not (Test-Path -LiteralPath $Live -PathType Leaf)) { Stop-NotChecked 'live settings.json is not a regular file' }
-  if ($liveItem -isnot [System.IO.FileInfo] -or $liveItem.FullName.StartsWith('\\.\', [System.StringComparison]::Ordinal) -or $liveItem.FullName.StartsWith('\\?\', [System.StringComparison]::Ordinal)) {
+  if ($liveItem -isnot [System.IO.FileInfo] -or -not [System.IO.File]::Exists($liveItem.FullName) -or $liveItem.FullName.StartsWith('\\.\', [System.StringComparison]::Ordinal) -or $liveItem.FullName.StartsWith('\\?\', [System.StringComparison]::Ordinal)) {
     Stop-NotChecked 'live settings.json is not a regular file'
   }
   $l = Read-Settings $Live
@@ -301,15 +310,7 @@ try {
   if ($l.State -ne 'ok') { Stop-NotChecked 'live settings.json is empty or holds more than one JSON value' }
   if (-not $l.IsObject) { Stop-NotChecked 'live settings.json is not a JSON object' }
 
-  foreach ($prop in $r.Value.PSObject.Properties) {
-    if ([string]::Equals([string]$prop.Name, '$schema', [System.StringComparison]::Ordinal)) { continue }
-    $h = $false
-    $child = $null
-    foreach ($lp in $l.Value.PSObject.Properties) {
-      if ([string]::Equals([string]$lp.Name, [string]$prop.Name, [System.StringComparison]::Ordinal)) { $h = $true; $child = $lp.Value; break }
-    }
-    Compare-Node $prop.Value $h $child ([string[]]@([string]$prop.Name))
-  }
+  Compare-Node $r.Value $true $l.Value ([string[]]@())
 
   if ($script:drift.Count -eq 0) {
     Write-Output 'settings: no repo setting missing or different (live-only settings not checked)'
@@ -318,6 +319,5 @@ try {
   foreach ($line in $script:drift) { Write-Output $line }
   exit 1
 } catch {
-  Write-Output 'settings drift: not checked - comparison failed'
-  exit 2
+  Stop-NotChecked 'comparison failed'
 }
