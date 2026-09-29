@@ -926,6 +926,40 @@ jobs:
             echo "::error::a backup of the foreign symlink was made"; exit 1
           fi
           echo "  ok - foreign symlink: skipped, drift reported, target untouched"
+      - name: install.sh treats a hard-linked settings.json as a real file
+        run: |
+          # Parity with the Windows step of the same case: a real file with a
+          # link count above 1 is still real data. install.sh tests with -L, so
+          # this should always pass; it pins that. The PowerShell twin is where
+          # a HardLink-as-link mutant bit.
+          fh="$RUNNER_TEMP/drift-home-hardlink"
+          rm -rf "$fh"; mkdir -p "$fh/.claude"
+          grep -vxF '      "Read(.env)",' settings.json > "$fh/.claude/settings.json"
+          ln "$fh/.claude/settings.json" "$fh/other1.json"
+          ln "$fh/.claude/settings.json" "$fh/other2.json"
+          before=$(sha256sum "$fh/.claude/settings.json")
+          rc=0
+          HOME="$fh" bash install.sh > "$RUNNER_TEMP/drift-install.out" 2>&1 || rc=$?
+          cat "$RUNNER_TEMP/drift-install.out"
+          [ "$rc" -eq 0 ] || { echo "::error::install.sh exited $rc"; exit 1; }
+          for want in \
+            'skip (real settings.json exists' \
+            '  settings drift: missing ["permissions","deny"] "Read(.env)"'
+          do
+            grep -qF "$want" "$RUNNER_TEMP/drift-install.out" || {
+              echo "::error::installer output lacks: $want"; exit 1
+            }
+          done
+          [ -f "$fh/.claude/settings.json" ] && [ ! -L "$fh/.claude/settings.json" ] || {
+            echo "::error::the hard-linked settings.json was replaced"; exit 1
+          }
+          [ "$before" = "$(sha256sum "$fh/.claude/settings.json")" ] || {
+            echo "::error::the hard-linked settings.json was modified"; exit 1
+          }
+          if ls "$fh/.claude"/settings.json.backup.* >/dev/null 2>&1; then
+            echo "::error::a backup of the hard-linked file was made"; exit 1
+          fi
+          echo "  ok - hard-linked real file: skipped, drift reported, file intact"
       - name: install.sh recognises its own settings.json link (absolute and relative)
         run: |
           # Ownership is decided by file identity, not by comparing link text.
@@ -1322,4 +1356,27 @@ jobs:
           if (Test-Path -LiteralPath $gone) { Write-Host "::error::dangling uninstall: the old target exists"; exit 1 }
           if ((Get-Backups $fh).Count -ne 0) { Write-Host "::error::dangling uninstall: the backup is still there after being restored"; exit 1 }
           Write-Host "  ok - uninstall: dangling link restored from its backup"
+
+          # -- hard-linked real file. LinkType reports HardLink for any file with
+          # a link count above 1, and .Target then lists the OTHER names. Caught
+          # here: Get-LinkTarget accepting HardLink - with two other names the
+          # joined names resolve to nothing, so the real file read as dangling
+          # and was deleted with no backup; with one it read as a foreign link.
+          $fh = New-Home 'drift-home-hardlink'
+          $link = Join-Path $fh '.claude\settings.json'
+          $repoLines = @((Get-Content -Raw -LiteralPath settings.json) -split "`r?`n")
+          $hlLines = @($repoLines | Where-Object { $_.Trim() -cne '"Read(.env)",' })
+          if ($hlLines.Count -ne $repoLines.Count - 1) { Write-Host "::error::hardlink: the fixture is not missing exactly one rule"; exit 1 }
+          [System.IO.File]::WriteAllText($link, ($hlLines -join "`n"), (New-Object System.Text.UTF8Encoding($false)))
+          New-Item -ItemType HardLink -Path (Join-Path $fh 'other1.json') -Value $link | Out-Null
+          New-Item -ItemType HardLink -Path (Join-Path $fh 'other2.json') -Value $link | Out-Null
+          $hlHash = (Get-FileHash -LiteralPath $link -Algorithm SHA256).Hash
+          $r = Invoke-Install $fh
+          if ($r.Rc -ne 0) { Write-Host "::error::hardlink: install.ps1 exited $($r.Rc)"; exit 1 }
+          if (@($r.Out | Where-Object { $_.Contains('skip (real settings.json exists') }).Count -eq 0) { Write-Host "::error::hardlink: no 'real settings.json exists' line"; exit 1 }
+          if ($r.Out -cnotcontains '  settings drift: missing ["permissions","deny"] "Read(.env)"') { Write-Host "::error::hardlink: no drift line"; exit 1 }
+          if (-not (Test-Path -LiteralPath $link)) { Write-Host "::error::hardlink: the hard-linked settings.json was deleted"; exit 1 }
+          if ((Get-FileHash -LiteralPath $link -Algorithm SHA256).Hash -ne $hlHash) { Write-Host "::error::hardlink: settings.json content changed"; exit 1 }
+          if ((Get-Backups $fh).Count -ne 0) { Write-Host "::error::hardlink: a backup was made"; exit 1 }
+          Write-Host "  ok - hard-linked real file: skipped, drift reported, file intact"
           exit 0

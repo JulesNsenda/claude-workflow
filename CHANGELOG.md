@@ -61,6 +61,11 @@ and a clone reads the tag.
   could surface as the installer's own exit code; it is reset. The re-run hint
   now uses `sh` / the current PowerShell host with
   `-ExecutionPolicy Bypass`, and quotes its paths.
+- `install.ps1` treated a **hard-linked** real file as a stale link — Windows
+  PowerShell reports any file with more than one name as `LinkType HardLink` —
+  so a hard-linked `CLAUDE.md` or agent file was deleted without a backup. Only
+  symbolic links and junctions count as links now; a hard-linked file is backed
+  up like any real file, and a hard-linked `settings.json` is never displaced.
 
 ## [1.2.0] - 2026-09-29
 

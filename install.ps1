@@ -59,7 +59,12 @@ function Get-LinkTarget($path) {
     $item = Get-ChildItem -LiteralPath (Split-Path -Parent $path) -Force -ErrorAction SilentlyContinue |
       Where-Object { $_.Name -ieq $leaf } | Select-Object -First 1
   }
-  if ($item -and $item.LinkType) { return ($item.Target -join '') }  # symlink or junction
+  # Only a symlink or junction is a link here. LinkType is also set to HardLink
+  # for ANY file with a link count above 1 (5.1 and 7), and its .Target then lists
+  # the file's other names; treating that as a link read a real, hard-linked
+  # settings.json as dangling and deleted it without a backup. A hard link is
+  # real data: fall through to $null.
+  if ($item -and ($item.LinkType -ieq 'SymbolicLink' -or $item.LinkType -ieq 'Junction')) { return ($item.Target -join '') }
   return $null
 }
 
@@ -300,7 +305,10 @@ function Invoke-DriftReport {
   Info ("re-run after a git pull: & " + (& $q $hostExe) + " -NoProfile -ExecutionPolicy Bypass -File " + (& $q (Join-Path $RepoDir 'scripts\settings-drift.ps1')) + " -Repo " + (& $q $settingsRepo) + " -Live " + (& $q $settingsTarget))
 }
 
-$settingsResolved = Get-ResolvedLinkTarget $settingsTarget   # $null for a non-link
+# Gated on the reparse-point test as well as the link type (belt and braces): a
+# real file must never reach the link branches, whatever LinkType reports.
+$settingsResolved = $null                                    # stays $null for a non-link
+if (Test-IsLink $settingsTarget) { $settingsResolved = Get-ResolvedLinkTarget $settingsTarget }
 if ((Test-IsLink $settingsTarget) -and -not $settingsResolved) {
   # A reparse point whose text can't be read: not provably dangling, not ours.
   Info "skip (settings.json is a link this installer cannot read - left as is)"

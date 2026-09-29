@@ -302,7 +302,15 @@ try {
   if ($null -eq $liveItem -or -not ([System.IO.File]::Exists($liveItem.FullName) -or [System.IO.Directory]::Exists($liveItem.FullName))) {
     Stop-NotChecked 'live settings.json not found'
   }
-  if ($liveItem -isnot [System.IO.FileInfo] -or -not [System.IO.File]::Exists($liveItem.FullName) -or $liveItem.FullName.StartsWith('\\.\', [System.StringComparison]::Ordinal) -or $liveItem.FullName.StartsWith('\\?\', [System.StringComparison]::Ordinal)) {
+  # The same device-namespace test is applied to a link's resolved target: a
+  # symlink whose text is \\.\pipe\x has an innocent-looking FullName of its own.
+  $liveResolved = $null
+  if ($liveItem.LinkType -ieq 'SymbolicLink' -or $liveItem.LinkType -ieq 'Junction') { $liveResolved = [string]($liveItem.Target -join '') }
+  $liveNotRegular = $liveItem -isnot [System.IO.FileInfo] -or -not [System.IO.File]::Exists($liveItem.FullName)
+  foreach ($p in @($liveItem.FullName, $liveResolved)) {
+    if ($p -and ($p.StartsWith('\\.\', [System.StringComparison]::Ordinal) -or $p.StartsWith('\\?\', [System.StringComparison]::Ordinal))) { $liveNotRegular = $true }
+  }
+  if ($liveNotRegular) {
     Stop-NotChecked 'live settings.json is not a regular file'
   }
   $l = Read-Settings $Live
