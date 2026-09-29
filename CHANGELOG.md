@@ -16,6 +16,52 @@ and a clone reads the tag.
 
 ## [Unreleased]
 
+### Added
+
+- **Settings drift check.** A hand-merged `~/.claude/settings.json` is never
+  overwritten, so a setting the repo adds later (`workflowSizeGuideline`) sat
+  un-merged for two months with nothing saying so.
+  [`settings-drift.sh`](./scripts/settings-drift.sh) (needs `jq`) and
+  `scripts/settings-drift.ps1` (no dependencies) list every repo setting
+  missing from, or different in, the live file; both installers run it from the
+  "real settings.json exists" and "symlink to elsewhere" branches and print the
+  command to re-run after a `git pull`. Comparison is case- and type-exact, arrays are checked per
+  element, a value from the live file is never printed, and it is one-direction
+  only (a setting the repo removes is not reported). Both scripts run the same
+  fixtures in `scripts/settings-drift-fixtures/` in CI.
+- **CI `settings-drift` jobs**, the first CI that runs the installers: the
+  fixtures under Windows PowerShell 5.1 and PowerShell 7 as well as `sh`, plus
+  `install.sh --dry-run` and `install.ps1 -DryRun` against a scratch home to
+  check the report appears, the run finishes, and nothing is written, plus the
+  `settings.json` symlink cases (own
+  absolute and relative, foreign, dangling, and uninstall restoring a
+  dangling backup).
+
+### Changed
+
+- The run-stats `gear` key in `scripts/run-stats.example.md` now reads `full`
+  only, matching the README: only full-gear runs write the block.
+
+### Fixed
+
+- `--dry-run` / `-DryRun` created `~/.claude/skills` and `~/.claude/agents`
+  before checking the flag; a dry run now writes nothing.
+- A `settings.json` symlink pointing outside the repo (e.g. into a dotfiles
+  repo) was silently re-pointed at this repo with no backup. It is now left
+  alone and gets the drift report, like a real file. "Points at this repo" is
+  decided by file identity (`-ef` / resolved path), so a relative link to the
+  repo's own `settings.json` is still recognised; uninstall's ownership prefix
+  now ends in a path separator, so a sibling clone such as
+  `claude-workflow-fork` is not claimed.
+- A **dangling** `settings.json` symlink (for instance from a moved clone) was
+  never repaired. It is now backed up as `settings.json.backup.<timestamp>`
+  (the link itself, so a target that is only unmounted stays restorable) and
+  re-linked to this repo.
+- `install.ps1` left the drift script's exit code in `$LASTEXITCODE`, which
+  could surface as the installer's own exit code; it is reset. The re-run hint
+  now uses `sh` / the current PowerShell host with
+  `-ExecutionPolicy Bypass`, and quotes its paths.
+
 ## [1.2.0] - 2026-09-29
 
 Minor: one new step in `plan-gates` Phase 2 — the installed surface —
