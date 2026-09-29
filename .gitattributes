@@ -3,3 +3,12 @@
 * text=auto
 *.sh   text eol=lf
 *.ps1  text eol=crlf
+# Settings-drift fixtures are byte-exact input: `* text=auto` would rewrite line
+# endings and could turn the CRLF/empty/whitespace cases into different tests.
+# -text pins every fixture file as-is, so the committed blob of crlf-live/live.json
+# holds real CR bytes and is CRLF on every checkout (an eol=crlf rule would store it
+# normalised and leave Linux checkouts with a plain-LF "CRLF" test).
+/scripts/settings-drift-fixtures/** -text
+# ...except the contract README: it is prose, not input, and should follow the
+# normal Markdown line-ending handling like every other .md file.
+/scripts/settings-drift-fixtures/README.md text=auto

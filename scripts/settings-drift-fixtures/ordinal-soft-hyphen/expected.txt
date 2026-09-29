@@ -1,0 +1,2 @@
+settings drift: missing ["permissions","defaultMode"] "x"
+settings drift: differs ["note"] repo "ab", live string

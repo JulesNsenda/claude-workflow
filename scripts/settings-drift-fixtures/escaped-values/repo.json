@@ -1,0 +1,4 @@
+{
+  "env": {"NOTE": "line1\nline2\ttab \"q\" back\\slash <>' \u0001 end"},
+  "permissions": {"allow": ["Bash(echo \"<>'\")"]}
+}

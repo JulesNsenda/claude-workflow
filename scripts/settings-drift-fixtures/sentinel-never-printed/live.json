@@ -1,0 +1,6 @@
+{
+  "workflowSizeGuideline": "SENTINEL-LIVE-7f3a",
+  "sentinelOnly": "SENTINEL-LIVE-7f3a",
+  "permissions": "SENTINEL-LIVE-7f3a",
+  "hooks": {"PostToolUse": [{"matcher": "Edit", "hooks": [{"type": "command", "command": "echo SENTINEL-LIVE-7f3a"}]}]}
+}

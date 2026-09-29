@@ -1,0 +1,1 @@
+settings drift: not checked - live settings.json is empty or holds more than one JSON value

@@ -1,0 +1,1 @@
+settings drift: not checked - live settings.json could not be parsed by PowerShell
