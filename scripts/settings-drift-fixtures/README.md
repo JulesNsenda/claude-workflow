@@ -88,6 +88,28 @@ One directory per case:
 - `expected.jq.txt` / `expected.ps.txt` - only where the message names the tool
   (`invalid-json-live`, `invalid-json-repo`, `two-floors`).
 
+Cases worth naming, because each pins one rule of the walk:
+
+- `substring-trap` - a near-miss, not a substring proof: live holds only the
+  `Read(.env.*)` variants, so the repo's bare `Read(.env)` rules are missing.
+- `substring-superset` - the one that kills a substring/`contains`
+  implementation: live holds `Read(.env)*` and `xBash(rm)x`, strings that
+  *contain* the repo rules, so only an exact-equality match still reports
+  `Bash(rm)` missing.
+- `scalar-wrong-case` - a scalar that differs from the repo value only in case.
+- `nested-wrong-case-key` - a nested object key that differs only in case
+  (keys are matched ordinally, case-sensitive).
+- `nested-key-order` - a nested repo object with unsorted keys against a live
+  file lacking it: drift is reported in repo document order, not sorted.
+- `repo-non-object-root`, `repo-empty` - the repo side is a non-object or 0
+  bytes: "nothing to compare", never a clean pass. `repo-absent` has no
+  `repo.json` at all and is "could not be parsed" (so it carries the tool-named
+  `expected.jq.txt` / `expected.ps.txt`).
+
+The "comparison failed" line has no fixture (every input the earlier checks let
+through also compares); CI reaches the `sh` side with a jq shim, and the
+PowerShell catch block is covered by review only.
+
 The harness compares output modulo line endings (CR is stripped, since jq.exe on
 Windows may emit CRLF). The exit code is implied by the expected output: the clean
 line means 0, a `missing`/`differs` line means 1, a `not checked` line means 2.

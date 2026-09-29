@@ -699,8 +699,11 @@ jobs:
         # settings-drift.ps1 (see the windows job below); each assertion is on
         # the exact output, the exit code, or a named absence, never on "did it
         # run". What each guard is proven by, should it ever be deleted:
-        #   - the exact comparison: substring-trap, wrong-case-rule and the
-        #     type-mismatch-* cases (their outputs differ by a single line);
+        #   - the exact comparison: wrong-case-rule and the type-mismatch-* cases
+        #     (their outputs differ by a single line); substring-superset is the
+        #     one that kills a substring/`contains` match (live holds strings
+        #     that contain the repo rule, so a substring match hides the gap);
+        #     substring-trap is only a near-miss (live has just the `.*` variants);
         #   - the exit code: any drift fixture, e.g. missing-array-rule;
         #   - the sentinel check: sentinel-never-printed (a secret-like live
         #     string in a hook command, a live-only key and a type mismatch);
@@ -778,6 +781,54 @@ jobs:
           }
           [ "$rc" -eq 2 ] || { echo "::error::jq-absent exit code $rc, expected 2"; exit 1; }
           echo "  ok - jq absent: exact line, exit 2"
+      - name: A failing comparison pass says so, exits 2 and leaks no jq stderr
+        run: |
+          # No fixture can reach the "comparison failed" mapping: every input the
+          # earlier guards let through also compares cleanly. So a shim stands in
+          # for jq via CLAUDE_WORKFLOW_JQ: it forwards to the real jq, except that
+          # it fails on the THIRD call only (settings-drift.sh calls jq three
+          # times, in order: repo info, live info, comparison) and writes a
+          # recognisable string to stderr. Catches two mutants:
+          #   - `|| not_checked 'comparison failed'` removed or changed: the
+          #     exact-line and exit-code assertions fail;
+          #   - `2>/dev/null` removed from the comparison call: the shim string
+          #     reaches the output and the stderr assertion fails.
+          # settings-drift.ps1's equivalent catch block is unreachable from file
+          # inputs, so it is covered by review, not CI.
+          real_jq=$(command -v jq)
+          shim="$RUNNER_TEMP/jq-shim.sh"
+          count="$RUNNER_TEMP/jq-shim.count"
+          rm -f "$count"
+          cat > "$shim" <<EOF
+          #!/bin/sh
+          echo x >> "$count"
+          if [ "\$(wc -l < "$count")" -eq 3 ]; then
+            echo SHIM-STDERR-9c1e >&2
+            exit 5
+          fi
+          exec "$real_jq" "\$@"
+          EOF
+          chmod +x "$shim"
+          fx=scripts/settings-drift-fixtures/clean
+          if CLAUDE_WORKFLOW_JQ="$shim" sh scripts/settings-drift.sh "$fx/repo.json" "$fx/live.json" \
+               > "$RUNNER_TEMP/shim.out" 2> "$RUNNER_TEMP/shim.err"; then
+            rc=0
+          else
+            rc=$?
+          fi
+          out=$(cat "$RUNNER_TEMP/shim.out")
+          [ "$out" = 'settings drift: not checked - comparison failed' ] || {
+            echo "::error::failed-comparison output was not the exact not-checked line"; printf '%s\n' "$out"; exit 1
+          }
+          [ "$rc" -eq 2 ] || { echo "::error::failed-comparison exit code $rc, expected 2"; exit 1; }
+          # stdout AND stderr: the shim's string must reach neither.
+          if grep -qF SHIM-STDERR-9c1e "$RUNNER_TEMP/shim.out" "$RUNNER_TEMP/shim.err"; then
+            echo "::error::jq stderr leaked out of a failed comparison"; exit 1
+          fi
+          [ "$(wc -l < "$count")" -eq 3 ] || {
+            echo "::error::shim was called $(wc -l < "$count") times, expected 3 - the call-count assumption no longer holds"; exit 1
+          }
+          echo "  ok - failed comparison: exact line, exit 2, stderr discarded"
       - name: Wrong argument count prints usage and exits 2
         run: |
           for args in '' 'a' 'a b c'; do
