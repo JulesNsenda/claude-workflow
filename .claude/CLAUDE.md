@@ -103,7 +103,7 @@ In those three, they are not:
    token must resolve to an agent/skill name if it *contains a hyphen*, or if a
    role word (`agent(s)`, `subagent(s)`, `critic(s)`, `skill(s)`, `override`)
    follows it. Exempt: `general-purpose`, `code-review`, `security-review`,
-   `verify`, `my-skill`. **Backtick script names with the `.sh` extension** — the
+   `verify`, `run`, `my-skill`. **Backtick script names with the `.sh` extension** — the
    token pattern has no dot, so `ref-check.sh` is not a token while a bare
    `ref-check` is a hyphenated one that would fail to resolve.
 3. **Reverse check.** Every agent and skill must appear as a backticked token at

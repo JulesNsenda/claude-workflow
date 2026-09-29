@@ -20,7 +20,7 @@ Copy what's useful.
 | [`.claude-plugin/`](./.claude-plugin/plugin.json) | Plugin manifest, so the skills + agents can also be installed as a namespaced [plugin](https://docs.claude.com/en/docs/claude-code/plugins). |
 | [`scripts/`](./scripts/) | The leak guard, [`run-stats.sh`](./scripts/run-stats.sh) (the run-stats aggregator), [`ref-check.sh`](./scripts/ref-check.sh), which asserts the docs and the `agents/`+`skills/` tree still name each other correctly, and [`version-check.sh`](./scripts/version-check.sh), which asserts a release tag matches the plugin manifest. **Not** symlinked by the installer — run these from the clone. |
 | [`install.sh`](./install.sh) / [`install.ps1`](./install.ps1) | Symlink the above into `~/.claude`. Idempotent; backs up anything it would overwrite. |
-| [`CHANGELOG.md`](./CHANGELOG.md) | What changed per release, and what major/minor/patch mean for a config repo. Tags track the version in the plugin manifest — pin a clone with `git checkout v1.0.0` if you don't want `main` to move under you. |
+| [`CHANGELOG.md`](./CHANGELOG.md) | What changed per release, and what major/minor/patch mean for a config repo. Tags track the version in the plugin manifest — pin a clone with `git checkout v1.1.0` if you don't want `main` to move under you. |
 | [`.claude/CLAUDE.md`](./.claude/CLAUDE.md) | Guidance for working **on this repo** — commands, the layering rules, and the CI invariants that prose edits break. The only tracked file under `.claude/`, and the counterpart to the row at the top of this table: that `CLAUDE.md` is the shipped product and loads everywhere, this one is project memory here and ships to nobody's `~/.claude`. Not installed, not in the reference checker's corpus. |
 
 ## The workflow, in one screen
@@ -129,7 +129,9 @@ the environment overrides frontmatter, and Enterprise per-model effort caps
 clamp it. (This is Claude Code's subagent `effort:` field — distinct from Claude
 Managed Agents' `model.effort`.)
 
-**`xhigh` is a session lever, not a pin.** No agent here pins it, and there is
+**`xhigh` is a session lever, not a pin** — and so is Ultracode, which as of
+2.1.284 is a separate toggle in `/effort` rather than a level above `xhigh`
+(see the harness assumptions below). No agent here pins either, and there is
 no per-invocation effort override **at the point of spawning** — the Agent tool
 takes a `model` parameter, but there is no `effort` equivalent. So `/effort
 xhigh` before a high-risk review escalates the orchestrator and any *un-pinned*
@@ -173,11 +175,15 @@ The uncontrolled edges are the built-ins this repo doesn't define: the
 you define; for the built-ins the levers are `disallowedTools` and the guard
 below.
 
-The **platform default is contested**, so don't rely on it either way. The
-v2.1.219 CHANGELOG says subagents now nest to depth 3 by default (was 1) and
-that `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1` disables nesting; the sub-agents
-reference still says a subagent can't spawn subagents by default, with its
-version note covering only v2.1.172–v2.1.216. Set the variable explicitly if
+The **platform default is 3 — and still not something to rely on**. The docs
+and CHANGELOG now agree: the v2.1.219 CHANGELOG moved the default from 1 to 3,
+and the sub-agents reference, which used to say a subagent can't spawn by
+default, now says "3 layers deep by default". (Earlier the two disagreed;
+resolved as of 2.1.284.) But the 2.1.284 build reads the default from a
+remotely served flag (`maxSubagentSpawnDepthFromGrowthBook`), so it can move
+without a release you'd notice. The env var is the documented override (the
+build's own refusal message says to raise it); its precedence over the remote
+flag was not separately tested. Set it explicitly if
 you depend on the depth:
 
 ```jsonc
@@ -195,7 +201,7 @@ it is a *symlink into this repo*, so editing it in place would put your personal
 environment into a tracked, public file. Replace it with a real copy (`cp -L`)
 before adding anything machine-specific.
 
-### Harness assumptions — Claude Code ≥ 2.1.218
+### Harness assumptions — Claude Code ≥ 2.1.218, re-checked against 2.1.284
 
 Version-specific, so stamped — everything in this subsection rots on a
 platform schedule:
@@ -206,30 +212,55 @@ platform schedule:
   effort*: below high it is back in the orchestrator's context. And since
   2.1.223 a bare call reuses the level typed last, so the level is not a
   stylistic choice — `plan-gates` names `high` at Gate 2 for both reasons.
+  (The current code-review page describes backgrounding without the
+  high-effort qualifier; unresolved, and moot here because Gate 2 names
+  `high` either way.)
 - Concurrent subagents are capped (`CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS`,
   default 20), and `--max-budget-usd` halts background subagents once the
-  budget is hit — worth setting for unattended runs.
+  budget is hit — worth setting for unattended runs. Both names are present in
+  the 2.1.284 build; neither appears in the current docs, so the default of 20
+  was not re-confirmed.
+- **Gate 4 names a project `verify` skill, else `/run`** — there is no built-in
+  `/verify`. No bundled skill registers `verify`
+  in 2.1.284; the harness looks for a *project* skill at
+  `.claude/skills/verify/SKILL.md` and otherwise points at the built-in that
+  launches and drives the app.
+- **Ultracode is its own toggle** — `/effort ultracode on|off`, separate from
+  the effort level. It is what brings dynamic workflows (the multi-agent
+  Workflow tool) into play, which is the thing `workflowSizeGuideline` in
+  [`settings.json`](./settings.json) advises on. `plan-gates` Phase 2
+  deliberately stays on plain `Agent` fan-out: its implementers, critics and
+  gates are a fixed, reviewable sequence, and a workflow script would put the
+  orchestration outside the plan file the approval stop was given.
 
-### Model assumptions — Opus 5 era, Claude Code ≥ 2.1.219
+### Model assumptions — Fable 5.1 / Opus 5.5 era, checked against Claude Code 2.1.284
 
 Three facts that decide how to read the tier table, then cost context and what
 was watched but not adopted (those two carry no version stamp):
 
 - **The critics pin `opus`, which is not the same as "strongest available".**
-  `best` resolves to Fable 5 where your organization has access to it,
-  *otherwise the latest Opus* — so on an org with Fable 5, `best` and `opus`
-  diverge and these agents run the Opus. That is a deliberate cost choice, not
+  `best` resolves to Fable (5.1 today, which needs ≥ 2.1.257) where your
+  organization has access to it, *otherwise the latest Opus* (5.5 today) — so
+  on an org with Fable, `best` and `opus` diverge and these agents run the
+  Opus. That is a deliberate cost choice, not
   an oversight; switch the two `model:` pins to `best` if you'd rather have the
   ceiling. Watch one edge: `opus` resolves by **provider**, and on Microsoft
   Foundry it lands on Opus 4.6. Separately, the **`default` setting** varies by
-  **account type** (Sonnet 5 on Pro, Team Standard and Enterprise subscription
-  seats) — a different axis from the alias, and easy to conflate. See the
+  **account type** — a different axis from the alias, and easy to conflate. A
+  copy of that table used to live here (Sonnet 5 on Pro, Team Standard and
+  Enterprise seats) and went stale with the 5.5 lineup, which is why it no
+  longer does. See the
   [model-config docs](https://code.claude.com/docs/en/model-config) for both
   tables rather than trusting a copy here.
 - **A report line naming a previous Opus is expected, not a routing bug.**
-  Opus 5 runs cybersecurity and biology safety classifiers; a
-  cybersecurity-flagged request re-runs on Opus 4.8, and a biology-flagged one
-  refuses outright with no fallback. Critically, **the session then continues
+  The frontier models run cybersecurity and biology safety classifiers. A
+  cybersecurity-flagged request re-runs on an older model — per the
+  CHANGELOG, Fable and Opus 5.5 step down through Opus 5 to Opus 4.8, and
+  Sonnet 5.5 to Sonnet 5 — and a biology-flagged one refuses outright with no
+  fallback. Don't confuse that chain with the per-model `fallback_3p` table in
+  the build (Fable 5.1 → Fable 5 → Opus 5.5 → Opus 5, checked in 2.1.284):
+  that one is third-party-provider *availability* fallback, a different
+  mechanism, and does not corroborate the classifier chain. Critically, **the session then continues
   on the fallback model until you run `/model`** — so a security review that
   trips the classifier can leave the rest of the session downgraded, which is
   exactly why every agent report opens with a `model:` line. Under an
@@ -241,13 +272,13 @@ was watched but not adopted (those two carry no version stamp):
   disables CLAUDE.md, skills, MCP servers, hooks *and this repo's agents*,
   while git status and directory names still load, so it does not rule out the
   repository's own content.
-- **Effort carries over between models.** Opus 5 does *not* reset to its own
+- **Effort carries over between models.** Opus 5.x does *not* reset to its own
   default when you switch to it — a level you previously set carries over, and
   `low`/`medium`/`high`/`xhigh` persist across sessions once set interactively
   (`max` is session-only). So the tier table's pins are the source of truth,
   and an effort level set for one experiment outlives it.
 
-On cost: Opus 5 is not a step up from the previous frontier Opus — same
+On cost (recorded for Opus 5; not re-checked for 5.5): Opus 5 is not a step up from the previous frontier Opus — same
 per-token price, with a 1M-token context window as both its default and its
 maximum. In Claude Code that window is included on Max, Team and Enterprise and
 needs usage credits on Pro. Fast mode runs it up to 2.5× faster, billed to
@@ -486,6 +517,18 @@ exists (and silently does nothing if it doesn't — verified against Claude Code
 memory loader). Put anything you don't want public — employer conventions,
 internal tool/agent names, machine-specific paths — in that file. It lives in
 `~/.claude`, never in this repo, so it's impossible to commit by accident.
+
+**One setting can switch all of this off.** Claude Code now also reads
+`AGENTS.md` (checked against 2.1.284), and a project-instructions setting
+decides which instruction files load: `claude-md-or-agents-md` (the default —
+a project with no `CLAUDE.md` gets its `AGENTS.md` instead), `claude-md`,
+`claude-md-and-agents-md`, and `managed-only`. The first three leave this
+repo's global `CLAUDE.md` alone. **`managed-only` does not**: in the build's
+own words, "the project's and your own instruction files are dropped; the
+organization's managed CLAUDE.md and memory stay" — so under it the tier
+table, the gears and the hard rules silently stop loading, while the skills
+and agents still install. If the rules seem to have gone quiet on a managed
+machine, check that setting first.
 
 ## Repo hygiene
 

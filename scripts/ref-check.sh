@@ -47,7 +47,10 @@
 #   - resolve against the inventory, case-insensitively — never a filesystem
 #     probe, which is case-blind on NTFS and case-sensitive on CI runners
 #   - exemptions (built-ins / template placeholders, no file by design):
-#     general-purpose, code-review, security-review, verify, my-skill
+#     general-purpose, code-review, security-review, verify, run, my-skill
+#     (`verify` stays although no built-in carries that name as of 2.1.284:
+#     plan-gates now names it as a *project* skill, which a target repo may
+#     define and this one does not)
 #
 # Never fails open: asserts the inventory is non-empty, that at least one
 # backtick token was extracted from the forward corpus, that at least one of
@@ -284,6 +287,7 @@ general-purpose
 code-review
 security-review
 verify
+run
 my-skill
 EOF
 

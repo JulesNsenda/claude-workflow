@@ -16,8 +16,25 @@ and a clone reads the tag.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-29
+
+Minor: one new gate in `plan-gates` — the installed surface — plus one new
+release script (scripts aren't installed); nothing removed or renamed. The rest is fixes and a re-check of every version-stamped
+harness assumption against Claude Code 2.1.284.
+
 ### Added
 
+- **Gate 5 · Simplify, then re-verify** in
+  [`plan-gates`](./skills/plan-gates/SKILL.md) Phase 2. The bar: a competent
+  junior can say what the change does without the plan file open. Drives the
+  built-in `/simplify`, escalates anything past a light cleanup to a mid-tier
+  `implementer`, and may neither change behaviour nor weaken a test. Gates 3
+  and 4 always re-run on the simplified code. The README diagram and the
+  `gates_failed_first_pass` description in
+  [`run-stats.example.md`](./scripts/run-stats.example.md) follow (1–4 → 1–5);
+  no run-stats key was added or renamed. ([#8])
+- A tracked repo-development guide at `.claude/CLAUDE.md`, so guidance about
+  *developing* this repo stays out of the shipped global `CLAUDE.md`. ([#8])
 - [`scripts/version-check.sh`](./scripts/version-check.sh) and a `version-guard`
   CI job: the git tag and the `version` field in
   [`.claude-plugin/plugin.json`](./.claude-plugin/plugin.json) have to agree, and
@@ -27,6 +44,44 @@ and a clone reads the tag.
   Detective rather than preventive by design — see
   [Releases](./README.md#releases) for the ordering that makes that safe, and
   for the one carrier (this file) that is deliberately still unguarded.
+  ([#6])
+
+### Changed
+
+- **Model lineup moved to Fable 5.1 / Opus 5.5 / Sonnet 5.5.** Only the tier
+  table's "Currently" column and the README model section change: agents pin
+  family aliases, so no `model:` line moved. The copied account-type table for
+  the `default` model setting was removed rather than updated, since it went
+  stale with this lineup; the README now points at the model-config docs
+  instead.
+- **README harness assumptions re-checked against 2.1.284.** The nesting
+  default is no longer contested (docs and CHANGELOG agree on depth 3), but it
+  is now served remotely, so setting `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH`
+  explicitly is stronger advice than before. Ultracode is recorded as its own
+  `/effort` toggle, with why `plan-gates` stays on plain `Agent` fan-out. A
+  new paragraph covers `AGENTS.md` and the project-instructions setting, whose
+  `managed-only` mode silently stops the global `CLAUDE.md` loading.
+- The effort claim is scoped to the Agent tool (skills *do* carry an effort
+  field; `plan-gates` declines to pin it, since it overrides rather than
+  floors). ([#8])
+
+### Fixed
+
+- **Gate 4 pointed at a built-in `/verify` that 2.1.284 doesn't ship.** It
+  now names a project `verify` skill first and the built-in `/run` otherwise.
+  [`ref-check.sh`](./scripts/ref-check.sh) exempts `run` as a built-in;
+  mutation-verified.
+- **Gate 2 names `/code-review`'s effort level** instead of calling it bare,
+  which reused whatever level was typed last and decided whether the review
+  ran in the orchestrator's context. ([#8])
+- **[`test-runner`](./agents/test-runner.md) was told to follow a project
+  `test` skill it has no `Skill` tool to load.** The body is now stated as
+  authoritative. ([#8])
+- **`version-check.sh` counted matching lines, not occurrences**, so a
+  single-line manifest with a nested `"version"` passed a *wrong* tag clean
+  and rejected the right one. The same change moved CI's tag trigger from
+  `v*` to `*`, so a non-`v` tag now fails loudly instead of running no CI.
+  ([#7])
 
 ## [1.0.0] - 2026-07-25
 
@@ -80,9 +135,13 @@ earlier release to upgrade from.
 
 Landed as pull requests [#1], [#2], [#3], and [#4].
 
-[Unreleased]: https://github.com/JulesNsenda/claude-workflow/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/JulesNsenda/claude-workflow/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/JulesNsenda/claude-workflow/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/JulesNsenda/claude-workflow/releases/tag/v1.0.0
 [#1]: https://github.com/JulesNsenda/claude-workflow/pull/1
 [#2]: https://github.com/JulesNsenda/claude-workflow/pull/2
 [#3]: https://github.com/JulesNsenda/claude-workflow/pull/3
 [#4]: https://github.com/JulesNsenda/claude-workflow/pull/4
+[#6]: https://github.com/JulesNsenda/claude-workflow/pull/6
+[#7]: https://github.com/JulesNsenda/claude-workflow/pull/7
+[#8]: https://github.com/JulesNsenda/claude-workflow/pull/8
