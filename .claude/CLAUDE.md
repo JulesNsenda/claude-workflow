@@ -77,7 +77,7 @@ Four layers, each with a single source of truth. Most mistakes here are
   pin, and its own findings schema. No agent is granted a spawn tool; that
   omission is the nesting control.
 - **`scripts/`** — the CI checks plus `run-stats.sh`. **Not symlinked by the
-  installer**, so anything that needs them (e.g. `plan-gates` step 9) must point
+  installer**, so anything that needs them (e.g. the `plan-gates` run-stats step) must point
   at the clone, not `~/.claude`.
 
 Two cross-layer rules worth knowing before editing:
