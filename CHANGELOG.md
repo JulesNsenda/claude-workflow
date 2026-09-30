@@ -16,6 +16,12 @@ and a clone reads the tag.
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-09-30
+
+Minor: two new scripts (the settings drift check) that both installers now
+call, and installer fixes that narrow what they overwrite; nothing removed or
+renamed. ([#13])
+
 ### Added
 
 - **Settings drift check.** A hand-merged `~/.claude/settings.json` is never
@@ -209,7 +215,8 @@ earlier release to upgrade from.
 
 Landed as pull requests [#1], [#2], [#3], and [#4].
 
-[Unreleased]: https://github.com/JulesNsenda/claude-workflow/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/JulesNsenda/claude-workflow/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/JulesNsenda/claude-workflow/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/JulesNsenda/claude-workflow/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/JulesNsenda/claude-workflow/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/JulesNsenda/claude-workflow/releases/tag/v1.0.0
@@ -222,3 +229,4 @@ Landed as pull requests [#1], [#2], [#3], and [#4].
 [#8]: https://github.com/JulesNsenda/claude-workflow/pull/8
 [#9]: https://github.com/JulesNsenda/claude-workflow/issues/9
 [#11]: https://github.com/JulesNsenda/claude-workflow/pull/11
+[#13]: https://github.com/JulesNsenda/claude-workflow/pull/13
