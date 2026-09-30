@@ -19,11 +19,13 @@ belong there — it belongs in this file. Treat the same way: `settings.json`,
 ## Commands
 
 There is **no test framework and no build**. CI (`.github/workflows/ci.yml`) is
-six jobs, each an inline shell block. Everything below runs from the repo root.
+eight jobs, each an inline script block (the Windows drift job is a two-leg
+matrix, Windows PowerShell 5.1 and PowerShell 7, and its steps are PowerShell).
+Everything below runs from the repo root.
 
 ```bash
-# Lint — exactly the five files CI checks
-shellcheck install.sh scripts/leak-check.sh scripts/run-stats.sh scripts/ref-check.sh scripts/version-check.sh
+# Lint — exactly the six files CI checks
+shellcheck install.sh scripts/leak-check.sh scripts/run-stats.sh scripts/ref-check.sh scripts/version-check.sh scripts/settings-drift.sh
 
 # Docs <-> agents/skills cross-references (CI invokes it as `sh`, not bash — POSIX is a real constraint)
 sh scripts/ref-check.sh
@@ -35,6 +37,21 @@ sh scripts/version-check.sh v1.0.0
 mkdir -p /tmp/plans-fixture && cp scripts/run-stats.example.md /tmp/plans-fixture/
 bash scripts/run-stats.sh /tmp/plans-fixture
 
+# Settings drift: which repo settings.json entries a hand-merged ~/.claude/settings.json lacks.
+# Exit 0 clean, 1 drift, 2 not checked. The installers run it themselves; run it after a git pull.
+# Always invoke it as sh (it is POSIX; the installers and CI do too).
+sh scripts/settings-drift.sh settings.json ~/.claude/settings.json                    # needs jq
+# PowerShell, no jq:  powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\settings-drift.ps1 -Repo .\settings.json -Live $env:USERPROFILE\.claude\settings.json
+# CLAUDE_WORKFLOW_JQ=/path/to/jq points it at a specific jq (CI sets /nonexistent to prove the jq-absent line)
+
+# One fixture by hand. scripts/settings-drift-fixtures/README.md is the Contract (messages, exit codes,
+# walk rules, fixture layout). The full loop (every fixture; output must equal expected.txt or
+# expected.jq.txt, modulo line endings, the exit code the expected output implies, and never a
+# SENTINEL) is the settings-drift job in ci.yml; scripts/settings-drift.ps1 takes -Repo/-Live and uses
+# expected.ps.txt where present.
+d=scripts/settings-drift-fixtures/missing-array-rule
+sh scripts/settings-drift.sh "$d/repo.json" "$d/live.json" | diff - "$d/expected.txt"
+
 # Leak guard (blocklist lives outside the repo: $LEAK_BLOCKLIST_FILE, else ~/.claude/leak-blocklist.txt)
 bash scripts/leak-check.sh
 
@@ -44,7 +61,7 @@ bash scripts/leak-check.sh
 
 ```powershell
 .\install.ps1 -DryRun           # Windows
-Invoke-ScriptAnalyzer -Path ./install.ps1 -Severity Error, Warning   # what CI's PSScriptAnalyzer job runs
+$r = foreach ($f in './install.ps1', './scripts/settings-drift.ps1') { Invoke-ScriptAnalyzer -Path $f -Severity Error, Warning }; $r   # what CI's PSScriptAnalyzer job runs (both files)
 ```
 
 **Running "a single test."** The self-tests are fixture blocks inside
@@ -76,7 +93,10 @@ Four layers, each with a single source of truth. Most mistakes here are
 - **`agents/*.md`** — the subagents, each with a `tools:` allowlist, a `model:`
   pin, and its own findings schema. No agent is granted a spawn tool; that
   omission is the nesting control.
-- **`scripts/`** — the CI checks plus `run-stats.sh`. **Not symlinked by the
+- **`scripts/`** — the CI checks plus `run-stats.sh`. `settings-drift.sh` and
+  `settings-drift.ps1` are one contract in two languages (no JSON tool is common
+  to a stock Mac, Linux and Windows box); `scripts/settings-drift-fixtures/README.md` is
+  the Contract and the directory holds its fixtures, and CI runs both scripts over them. **Not symlinked by the
   installer**, so anything that needs them (e.g. the `plan-gates` run-stats step) must point
   at the clone, not `~/.claude`.
 
@@ -147,8 +167,13 @@ re-cut.
 `CHANGELOG.md` is a third carrier and is **not** guarded — a tag with no matching
 changelog heading still passes. That leg is a human check. For this repo semver
 reads against the *installed surface*: **major** moves where the installer writes
-or removes/renames an agent, skill, or hard rule; **minor** adds one; **patch** is
-fixes and wording.
+or removes/renames an agent, skill, or hard rule; **minor** adds an agent, skill,
+script, or rule; **patch** is fixes and wording.
+
+The drift check only sees one direction (repo to live), so a `settings.json`
+removal is invisible to it. The convention that covers it: list the removal in
+the CHANGELOG under **Removed** and word it "delete from a hand-merged
+settings.json".
 
 ## Conventions when editing
 

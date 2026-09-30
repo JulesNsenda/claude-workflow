@@ -1,0 +1,1 @@
+settings drift: differs ["permissions","deny"] repo array, live string

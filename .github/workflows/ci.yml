@@ -14,7 +14,7 @@ on:
     # shape check reject a non-`v` tag loudly instead.
     #
     # NOTE: every job in this file now also runs on tag pushes, against the
-    # detached HEAD `actions/checkout` produces. All six are ref-agnostic today
+    # detached HEAD `actions/checkout` produces. All of them are ref-agnostic today
     # (ref-check.sh reads the git index; the leak blocklist secret is available
     # on same-repo tag pushes). Anything added later that assumes a branch —
     # `github.ref_name` used as a branch name, a docs deploy, a `contents:
@@ -52,7 +52,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Lint shell scripts
-        run: shellcheck install.sh scripts/leak-check.sh scripts/run-stats.sh scripts/ref-check.sh scripts/version-check.sh
+        run: shellcheck install.sh scripts/leak-check.sh scripts/run-stats.sh scripts/ref-check.sh scripts/version-check.sh scripts/settings-drift.sh
 
   run-stats:
     name: run-stats.sh smoke test
@@ -665,10 +665,718 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Lint install.ps1 (errors fail; warnings reported)
+      - name: Lint install.ps1 and settings-drift.ps1 (errors fail; warnings reported)
         shell: pwsh
         run: |
           Install-Module PSScriptAnalyzer -Force -Scope CurrentUser
-          $results = Invoke-ScriptAnalyzer -Path ./install.ps1 -Severity Error, Warning
+          $results = foreach ($f in './install.ps1', './scripts/settings-drift.ps1') {
+            Invoke-ScriptAnalyzer -Path $f -Severity Error, Warning
+          }
           if ($results) { $results | Format-Table -AutoSize | Out-String | Write-Host }
           if ($results | Where-Object Severity -eq 'Error') { exit 1 }
+
+  settings-drift:
+    name: settings-drift.sh (fixtures + installer wiring)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Nothing here pushes; the token need not stay in .git/config while
+          # the installer runs against a scratch HOME.
+          persist-credentials: false
+      - name: Confirm jq is present
+        # ubuntu-latest ships jq; the install is a belt-and-braces fallback so a
+        # runner-image change cannot turn every fixture into "jq not found".
+        # apt-get update first: a fresh runner's package index can be stale
+        # enough for the install to 404. The version is echoed so a fixture
+        # failure after an image bump can be read against the jq it ran on.
+        run: |
+          command -v jq >/dev/null 2>&1 || { sudo apt-get update && sudo apt-get install -y jq; }
+          jq --version
+      - name: Every fixture must print exactly its expected output
+        # Invoked as `sh`, not `bash`, so the POSIX constraint is exercised
+        # rather than merely linted. The fixtures ARE the contract shared with
+        # settings-drift.ps1 (see the windows job below); each assertion is on
+        # the exact output, the exit code, or a named absence, never on "did it
+        # run". What each guard is proven by, should it ever be deleted:
+        #   - the exact comparison: wrong-case-rule and the type-mismatch-* cases
+        #     (their outputs differ by a single line); substring-superset is the
+        #     one that kills a substring/`contains` match (live holds strings
+        #     that contain the repo rule, so a substring match hides the gap);
+        #     substring-trap is only a near-miss (live has just the `.*` variants);
+        #   - the exit code: any drift fixture, e.g. missing-array-rule;
+        #   - the sentinel check: sentinel-never-printed (a secret-like live
+        #     string in a hook command, a live-only key and a type mismatch);
+        #   - the zero-fixture floor: point $fx at an empty directory.
+        run: |
+          fx=scripts/settings-drift-fixtures
+          clean='settings: no repo setting missing or different (live-only settings not checked)'
+          n=0
+          for dir in "$fx"/*/; do
+            dir=${dir%/}
+            name=$(basename "$dir")
+            n=$((n + 1))
+
+            # jq parse errors name the tool, so two cases carry expected.jq.txt
+            # instead of the shared expected.txt (PowerShell: expected.ps.txt).
+            if [ -f "$dir/expected.txt" ]; then exp="$dir/expected.txt"
+            elif [ -f "$dir/expected.jq.txt" ]; then exp="$dir/expected.jq.txt"
+            else echo "::error::$name: no expected.txt or expected.jq.txt"; exit 1
+            fi
+
+            # The exit code is not stored: it is implied by the expected output
+            # (fixtures README), so a fixture cannot drift from its own code.
+            tr -d '\r' < "$exp" > "$RUNNER_TEMP/drift.want"
+            if [ "$(cat "$RUNNER_TEMP/drift.want")" = "$clean" ]; then want=0
+            elif grep -qE '^settings drift: (missing|differs) ' "$RUNNER_TEMP/drift.want"; then want=1
+            elif grep -q '^settings drift: not checked' "$RUNNER_TEMP/drift.want"; then want=2
+            else echo "::error::$name: cannot derive an exit code from $exp"; exit 1
+            fi
+
+            # Note the `|| rc=$?`: steps run as `bash -e`, so a bare command that
+            # exits 1 or 2 (both normal here) would abort the step; a command
+            # on the left of `||` is exempt from -e.
+            rc=0
+            sh scripts/settings-drift.sh "$dir/repo.json" "$dir/live.json" \
+              > "$RUNNER_TEMP/drift.out" 2> "$RUNNER_TEMP/drift.err" || rc=$?
+            tr -d '\r' < "$RUNNER_TEMP/drift.out" > "$RUNNER_TEMP/drift.got"
+
+            if ! diff -u "$RUNNER_TEMP/drift.want" "$RUNNER_TEMP/drift.got"; then
+              echo "::error::$name: output differs from $exp (diff above)"; exit 1
+            fi
+            if [ "$rc" -ne "$want" ]; then
+              echo "::error::$name: exit code $rc, expected $want"; exit 1
+            fi
+            # stdout AND stderr: a leak on either is a leak.
+            if grep -q SENTINEL "$RUNNER_TEMP/drift.out" "$RUNNER_TEMP/drift.err"; then
+              echo "::error::$name: a live value (SENTINEL) reached the output"; exit 1
+            fi
+            echo "  ok - $name (exit $rc)"
+          done
+
+          # A glob that matches nothing would loop zero times and pass.
+          if [ "$n" -eq 0 ]; then
+            echo "::error::no fixtures found under $fx - refusing to report a false clean pass"; exit 1
+          fi
+          # The sentinel assertion above is vacuous if the fixture stopped
+          # holding one, so pin that too.
+          grep -q SENTINEL "$fx/sentinel-never-printed/live.json" || {
+            echo "::error::sentinel-never-printed/live.json no longer holds a SENTINEL value - the never-print check proves nothing"; exit 1
+          }
+          echo "  ok - $n fixtures"
+      - name: Without jq the script says so and exits 2
+        run: |
+          # CLAUDE_WORKFLOW_JQ is the seam: the runner ships jq, so removing it
+          # from PATH is not an option. Exact line and exit 2, both asserted.
+          fx=scripts/settings-drift-fixtures/clean
+          rc=0
+          out=$(CLAUDE_WORKFLOW_JQ=/nonexistent sh scripts/settings-drift.sh "$fx/repo.json" "$fx/live.json" 2>&1) || rc=$?
+          [ "$out" = 'settings drift: not checked - jq not found' ] || {
+            echo "::error::jq-absent output was not the exact not-checked line"; printf '%s\n' "$out"; exit 1
+          }
+          [ "$rc" -eq 2 ] || { echo "::error::jq-absent exit code $rc, expected 2"; exit 1; }
+          echo "  ok - jq absent: exact line, exit 2"
+      - name: A failing comparison pass says so, exits 2 and leaks no jq stderr
+        run: |
+          # No fixture can reach the "comparison failed" mapping: every input the
+          # earlier guards let through also compares cleanly. So a shim stands in
+          # for jq via CLAUDE_WORKFLOW_JQ: it forwards to the real jq, except that
+          # it fails on the THIRD call only (settings-drift.sh calls jq three
+          # times, in order: repo info, live info, comparison) and writes a
+          # recognisable string to stderr. Catches two mutants:
+          #   - `|| not_checked 'comparison failed'` removed or changed: the
+          #     exact-line and exit-code assertions fail;
+          #   - `2>/dev/null` removed from the comparison call: the shim string
+          #     reaches the output and the stderr assertion fails.
+          # settings-drift.ps1's equivalent catch block is unreachable from file
+          # inputs, so it is covered by review, not CI.
+          real_jq=$(command -v jq)
+          shim="$RUNNER_TEMP/jq-shim.sh"
+          count="$RUNNER_TEMP/jq-shim.count"
+          rm -f "$count"
+          cat > "$shim" <<EOF
+          #!/bin/sh
+          echo x >> "$count"
+          if [ "\$(wc -l < "$count")" -eq 3 ]; then
+            echo SHIM-STDERR-9c1e >&2
+            exit 5
+          fi
+          exec "$real_jq" "\$@"
+          EOF
+          chmod +x "$shim"
+          fx=scripts/settings-drift-fixtures/clean
+          rc=0
+          CLAUDE_WORKFLOW_JQ="$shim" sh scripts/settings-drift.sh "$fx/repo.json" "$fx/live.json" \
+            > "$RUNNER_TEMP/shim.out" 2> "$RUNNER_TEMP/shim.err" || rc=$?
+          out=$(cat "$RUNNER_TEMP/shim.out")
+          [ "$out" = 'settings drift: not checked - comparison failed' ] || {
+            echo "::error::failed-comparison output was not the exact not-checked line"; printf '%s\n' "$out"; exit 1
+          }
+          [ "$rc" -eq 2 ] || { echo "::error::failed-comparison exit code $rc, expected 2"; exit 1; }
+          # stdout AND stderr: the shim's string must reach neither.
+          if grep -qF SHIM-STDERR-9c1e "$RUNNER_TEMP/shim.out" "$RUNNER_TEMP/shim.err"; then
+            echo "::error::jq stderr leaked out of a failed comparison"; exit 1
+          fi
+          [ "$(wc -l < "$count")" -eq 3 ] || {
+            echo "::error::shim was called $(wc -l < "$count") times, expected 3 - the call-count assumption no longer holds"; exit 1
+          }
+          echo "  ok - failed comparison: exact line, exit 2, stderr discarded"
+      - name: Wrong argument count prints usage and exits 2
+        run: |
+          for args in '' 'a' 'a b c'; do
+            # shellcheck disable=SC2086 # deliberate word splitting: '' means no args
+            rc=0
+            out=$(sh scripts/settings-drift.sh $args 2>&1) || rc=$?
+            printf '%s\n' "$out" | grep -qF 'usage: settings-drift.sh' || {
+              echo "::error::no usage message with [$args]"; printf '%s\n' "$out"; exit 1
+            }
+            [ "$rc" -eq 2 ] || { echo "::error::usage exit code $rc with [$args], expected 2"; exit 1; }
+          done
+          echo "  ok - wrong argument count prints usage, exit 2"
+      - name: install.sh --dry-run reports drift, stays read-only, and finishes
+        run: |
+          # HOME under $RUNNER_TEMP: the installer must never see the runner's
+          # real ~/.claude. The live file is a REAL file missing exactly one
+          # repo deny rule, so the skip branch and the drift report both fire.
+          fh="$RUNNER_TEMP/drift-home"
+          rm -rf "$fh"; mkdir -p "$fh/.claude"
+          grep -vxF '      "Read(.env)",' settings.json > "$fh/.claude/settings.json"
+          if cmp -s settings.json "$fh/.claude/settings.json"; then
+            echo "::error::the wiring fixture is not missing a rule - settings.json no longer has the expected Read(.env) line"; exit 1
+          fi
+          before=$(sha256sum "$fh/.claude/settings.json")
+          find "$fh" | sort > "$RUNNER_TEMP/drift-tree.before"
+
+          # Runs the installer against the scratch HOME, shows its output, keeps
+          # it for the assertions and requires exit 0. `|| rc=$?` keeps a
+          # failure from aborting under `bash -e` before the message is printed.
+          run_install() {
+            local rc=0
+            HOME="$fh" bash install.sh "$@" > "$RUNNER_TEMP/drift-install.out" 2>&1 || rc=$?
+            cat "$RUNNER_TEMP/drift-install.out"
+            [ "$rc" -eq 0 ] || { echo "::error::${kind:+$kind: }install.sh${*:+ $*} exited $rc"; exit 1; }
+          }
+          run_install --dry-run
+
+          # Exit 0 (run_install) AND the later sections AND the final line: a
+          # drift script that aborted the installer half-way (set -e on its
+          # exit 1) would fail here on any one of them.
+          for want in \
+            '  settings drift: missing ["permissions","deny"] "Read(.env)"' \
+            'agents:' \
+            'skills:' \
+            'Done. Restart Claude Code to pick up changes.'
+          do
+            grep -qxF "$want" "$RUNNER_TEMP/drift-install.out" || {
+              echo "::error::installer output lacks the line: $want"; exit 1
+            }
+          done
+
+          # Read-only: a dry run neither edits the live file nor creates
+          # anything (it used to mkdir skills/ and agents/ first).
+          after=$(sha256sum "$fh/.claude/settings.json")
+          [ "$before" = "$after" ] || { echo "::error::dry-run modified the live settings.json"; exit 1; }
+          find "$fh" | sort > "$RUNNER_TEMP/drift-tree.after"
+          diff -u "$RUNNER_TEMP/drift-tree.before" "$RUNNER_TEMP/drift-tree.after" || {
+            echo "::error::dry-run created or removed entries under the fake ~/.claude"; exit 1
+          }
+          echo "  ok - dry-run: drift line, later sections, final line, nothing written"
+      - name: install.sh leaves a settings.json symlink to elsewhere alone
+        run: |
+          # Before the fix such a link (e.g. into a dotfiles repo) was silently
+          # re-pointed at the repo, swapping the user's live permission rules
+          # with no backup. A normal (non-dry-run) install, because that is
+          # where it bit.
+          fh="$RUNNER_TEMP/drift-home-link"
+          dot="$RUNNER_TEMP/drift-dotfiles"
+          rm -rf "$fh" "$dot"; mkdir -p "$fh/.claude" "$dot"
+          grep -vxF '      "Read(.env)",' settings.json > "$dot/settings.json"
+          ln -s "$dot/settings.json" "$fh/.claude/settings.json"
+          before=$(sha256sum "$dot/settings.json")
+
+          # Runs the installer against the scratch HOME, shows its output, keeps
+          # it for the assertions and requires exit 0. `|| rc=$?` keeps a
+          # failure from aborting under `bash -e` before the message is printed.
+          run_install() {
+            local rc=0
+            HOME="$fh" bash install.sh "$@" > "$RUNNER_TEMP/drift-install.out" 2>&1 || rc=$?
+            cat "$RUNNER_TEMP/drift-install.out"
+            [ "$rc" -eq 0 ] || { echo "::error::${kind:+$kind: }install.sh${*:+ $*} exited $rc"; exit 1; }
+          }
+          run_install
+
+          for want in \
+            'links elsewhere and is left as is' \
+            '  settings drift: missing ["permissions","deny"] "Read(.env)"' \
+            'Done. Restart Claude Code to pick up changes.'
+          do
+            grep -qF "$want" "$RUNNER_TEMP/drift-install.out" || {
+              echo "::error::installer output lacks: $want"; exit 1
+            }
+          done
+          # The link still points where the user put it, its target is
+          # untouched, and no backup was made (there was nothing to displace).
+          [ "$(readlink "$fh/.claude/settings.json")" = "$dot/settings.json" ] || {
+            echo "::error::the foreign settings.json symlink was re-pointed"; exit 1
+          }
+          [ "$before" = "$(sha256sum "$dot/settings.json")" ] || {
+            echo "::error::the symlink target was modified"; exit 1
+          }
+          if ls "$fh/.claude"/settings.json.backup.* >/dev/null 2>&1; then
+            echo "::error::a backup of the foreign symlink was made"; exit 1
+          fi
+          echo "  ok - foreign symlink: skipped, drift reported, target untouched"
+      - name: install.sh treats a hard-linked settings.json as a real file
+        run: |
+          # Parity with the Windows step of the same case: a real file with a
+          # link count above 1 is still real data. install.sh tests with -L, so
+          # this should always pass; it pins that. The PowerShell twin is where
+          # a HardLink-as-link mutant bit.
+          fh="$RUNNER_TEMP/drift-home-hardlink"
+          rm -rf "$fh"; mkdir -p "$fh/.claude"
+          grep -vxF '      "Read(.env)",' settings.json > "$fh/.claude/settings.json"
+          ln "$fh/.claude/settings.json" "$fh/other1.json"
+          ln "$fh/.claude/settings.json" "$fh/other2.json"
+          before=$(sha256sum "$fh/.claude/settings.json")
+          rc=0
+          HOME="$fh" bash install.sh > "$RUNNER_TEMP/drift-install.out" 2>&1 || rc=$?
+          cat "$RUNNER_TEMP/drift-install.out"
+          [ "$rc" -eq 0 ] || { echo "::error::install.sh exited $rc"; exit 1; }
+          for want in \
+            'skip (real settings.json exists' \
+            '  settings drift: missing ["permissions","deny"] "Read(.env)"'
+          do
+            grep -qF "$want" "$RUNNER_TEMP/drift-install.out" || {
+              echo "::error::installer output lacks: $want"; exit 1
+            }
+          done
+          [ -f "$fh/.claude/settings.json" ] && [ ! -L "$fh/.claude/settings.json" ] || {
+            echo "::error::the hard-linked settings.json was replaced"; exit 1
+          }
+          [ "$before" = "$(sha256sum "$fh/.claude/settings.json")" ] || {
+            echo "::error::the hard-linked settings.json was modified"; exit 1
+          }
+          if ls "$fh/.claude"/settings.json.backup.* >/dev/null 2>&1; then
+            echo "::error::a backup of the hard-linked file was made"; exit 1
+          fi
+          echo "  ok - hard-linked real file: skipped, drift reported, file intact"
+      - name: install.sh recognises its own settings.json link (absolute and relative)
+        run: |
+          # Ownership is decided by file identity, not by comparing link text.
+          # Caught by this step: a readlink string compare (the relative link
+          # would be judged foreign and skipped with a drift report) and a link()
+          # that re-creates an already-correct link (the link text would change
+          # or a backup appear). Each case asserts the printed line, that no
+          # drift report ran (an own link is not a hand-merged file), and the
+          # resulting link state.
+
+          # Runs the installer against the scratch HOME, shows its output, keeps
+          # it for the assertions and requires exit 0. `|| rc=$?` keeps a
+          # failure from aborting under `bash -e` before the message is printed.
+          run_install() {
+            local rc=0
+            HOME="$fh" bash install.sh "$@" > "$RUNNER_TEMP/drift-install.out" 2>&1 || rc=$?
+            cat "$RUNNER_TEMP/drift-install.out"
+            [ "$rc" -eq 0 ] || { echo "::error::${kind:+$kind: }install.sh${*:+ $*} exited $rc"; exit 1; }
+          }
+          for kind in absolute relative; do
+            fh="$RUNNER_TEMP/drift-home-own-$kind"
+            rm -rf "$fh"; mkdir -p "$fh/.claude"
+            if [ "$kind" = absolute ]; then
+              want_link="$PWD/settings.json"
+            else
+              want_link=$(realpath --relative-to="$fh/.claude" "$PWD/settings.json")
+            fi
+            ln -s "$want_link" "$fh/.claude/settings.json"
+
+            run_install
+
+            grep -qxF '  ok (already linked): ~/.claude/settings.json' "$RUNNER_TEMP/drift-install.out" || {
+              echo "::error::$kind: an own settings.json link was not recognised as already linked"; exit 1
+            }
+            if grep -qE 'settings drift|re-run after a git pull|links elsewhere' "$RUNNER_TEMP/drift-install.out"; then
+              echo "::error::$kind: an own settings.json link got a foreign-link skip or a drift report"; exit 1
+            fi
+            [ "$(readlink "$fh/.claude/settings.json")" = "$want_link" ] || {
+              echo "::error::$kind: the own link was re-created ($(readlink "$fh/.claude/settings.json"))"; exit 1
+            }
+            [ "$fh/.claude/settings.json" -ef settings.json ] || {
+              echo "::error::$kind: the link no longer resolves to the repo settings.json"; exit 1
+            }
+            if ls "$fh/.claude"/settings.json.backup.* >/dev/null 2>&1; then
+              echo "::error::$kind: a backup of an own link was made"; exit 1
+            fi
+            echo "  ok - own $kind link: recognised, no drift report, link untouched"
+          done
+      - name: install.sh backs up a dangling settings.json link and re-links
+        run: |
+          # A dangling link holds no data, but its target may be an unmounted
+          # drive, so the link itself is kept (settings.json.backup.<stamp>) and
+          # settings.json is linked to the repo. Caught by this step: the old
+          # blind rm of a stale link (no backup), and the foreign-link rule
+          # swallowing it (no re-link, so a drift report on a missing file).
+          fh="$RUNNER_TEMP/drift-home-dangling"
+          gone="$RUNNER_TEMP/drift-unmounted/settings.json"
+          rm -rf "$fh" "$RUNNER_TEMP/drift-unmounted"; mkdir -p "$fh/.claude"
+          ln -s "$gone" "$fh/.claude/settings.json"
+          if [ -e "$fh/.claude/settings.json" ]; then
+            echo "::error::the dangling fixture is not dangling"; exit 1
+          fi
+
+          # Runs the installer against the scratch HOME, shows its output, keeps
+          # it for the assertions and requires exit 0. `|| rc=$?` keeps a
+          # failure from aborting under `bash -e` before the message is printed.
+          run_install() {
+            local rc=0
+            HOME="$fh" bash install.sh "$@" > "$RUNNER_TEMP/drift-install.out" 2>&1 || rc=$?
+            cat "$RUNNER_TEMP/drift-install.out"
+            [ "$rc" -eq 0 ] || { echo "::error::${kind:+$kind: }install.sh${*:+ $*} exited $rc"; exit 1; }
+          }
+          run_install
+
+          grep -qE '^  backed up dangling symlink -> settings\.json\.backup\.[0-9]+$' "$RUNNER_TEMP/drift-install.out" || {
+            echo "::error::no 'backed up dangling symlink' line"; exit 1
+          }
+          grep -qE '^  linked: .*settings\.json -> .*settings\.json$' "$RUNNER_TEMP/drift-install.out" || {
+            echo "::error::no 'linked:' line for settings.json"; exit 1
+          }
+          if grep -q 'settings drift' "$RUNNER_TEMP/drift-install.out"; then
+            echo "::error::a dangling link got a drift report instead of being re-linked"; exit 1
+          fi
+          set -- "$fh/.claude"/settings.json.backup.*
+          [ "$#" -eq 1 ] && [ -L "$1" ] || {
+            echo "::error::expected exactly one backup and it to be a symlink (got $#)"; exit 1
+          }
+          [ "$(readlink "$1")" = "$gone" ] || {
+            echo "::error::the backup does not point at the old target"; exit 1
+          }
+          [ -L "$fh/.claude/settings.json" ] && [ "$fh/.claude/settings.json" -ef settings.json ] || {
+            echo "::error::settings.json is not now a link to the repo settings.json"; exit 1
+          }
+          echo "  ok - dangling link: backed up (still a link to the old target), re-linked"
+      - name: install.sh --uninstall restores the dangling settings.json link
+        run: |
+          # Continues from the previous step's home: settings.json links to the
+          # repo and the backup is a link to a missing target. Uninstall must
+          # unlink ours and move the backup back as a link (still dangling).
+          # Caught by this step: a restore that follows or drops the dangling
+          # link (mv of a missing target treated as an error), and an uninstall
+          # that leaves the slot empty.
+          fh="$RUNNER_TEMP/drift-home-dangling"
+          gone="$RUNNER_TEMP/drift-unmounted/settings.json"
+          ls "$fh/.claude"/settings.json.backup.* >/dev/null 2>&1 || {
+            echo "::error::no backup left over from the previous step"; exit 1
+          }
+          # Runs the installer against the scratch HOME, shows its output, keeps
+          # it for the assertions and requires exit 0. `|| rc=$?` keeps a
+          # failure from aborting under `bash -e` before the message is printed.
+          run_install() {
+            local rc=0
+            HOME="$fh" bash install.sh "$@" > "$RUNNER_TEMP/drift-install.out" 2>&1 || rc=$?
+            cat "$RUNNER_TEMP/drift-install.out"
+            [ "$rc" -eq 0 ] || { echo "::error::${kind:+$kind: }install.sh${*:+ $*} exited $rc"; exit 1; }
+          }
+          run_install --uninstall
+
+          grep -qE '^  restored backup: settings\.json\.backup\.[0-9]+$' "$RUNNER_TEMP/drift-install.out" || {
+            echo "::error::no 'restored backup' line for settings.json"; exit 1
+          }
+          [ -L "$fh/.claude/settings.json" ] && [ "$(readlink "$fh/.claude/settings.json")" = "$gone" ] || {
+            echo "::error::settings.json is not restored as a link to the old target"; exit 1
+          }
+          [ ! -e "$fh/.claude/settings.json" ] || {
+            echo "::error::the restored link is not dangling"; exit 1
+          }
+          if ls "$fh/.claude"/settings.json.backup.* >/dev/null 2>&1; then
+            echo "::error::the backup is still there after being restored"; exit 1
+          fi
+          echo "  ok - uninstall: dangling link restored from its backup"
+
+  settings-drift-windows:
+    name: settings-drift.ps1 (${{ matrix.shell }}) + install.ps1 wiring
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # `powershell` is Windows PowerShell 5.1, `pwsh` is PowerShell 7. The
+        # script must behave identically under both (ConvertTo-Json differs
+        # between them, which is why it carries its own encoder), and pwsh on
+        # Linux would not test 5.1 at all - hence a Windows runner.
+        shell: [powershell, pwsh]
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+    env:
+      MATRIX_SHELL: ${{ matrix.shell }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # As in the ubuntu job: nothing pushes.
+          persist-credentials: false
+      - name: Confirm the step really runs under the shell being tested
+        run: |
+          $v = $PSVersionTable.PSVersion
+          Write-Host "PowerShell $v ($env:MATRIX_SHELL)"
+          if ($env:MATRIX_SHELL -eq 'powershell' -and $v.Major -ne 5) { Write-Host "::error::expected Windows PowerShell 5.x, got $v"; exit 1 }
+          if ($env:MATRIX_SHELL -eq 'pwsh' -and $v.Major -lt 7) { Write-Host "::error::expected PowerShell 7+, got $v"; exit 1 }
+          exit 0
+      - name: Every fixture must print exactly its expected output
+        run: |
+          # The same fixtures and assertions as the ubuntu job: exact output
+          # (CR stripped), the exit code implied by that output, and no
+          # SENTINEL on stdout or stderr. The script runs as a child of the
+          # shell under test, which gives a true exit code and exercises the
+          # -File form the installer's re-run hint prints.
+          # GitHub prepends $ErrorActionPreference = 'stop', which turns native
+          # stderr redirection into a terminating error under 5.1.
+          $ErrorActionPreference = 'Continue'
+          $exe = (Get-Process -Id $PID).Path
+          $fx = 'scripts/settings-drift-fixtures'
+          $clean = 'settings: no repo setting missing or different (live-only settings not checked)'
+          $err = Join-Path $env:RUNNER_TEMP 'drift.err'
+          $n = 0
+          foreach ($dir in @(Get-ChildItem -LiteralPath $fx -Directory | Sort-Object Name)) {
+            $name = $dir.Name
+            $n++
+            # expected.ps.txt where the message names the tool (PowerShell).
+            $exp = Join-Path $dir.FullName 'expected.txt'
+            if (-not (Test-Path -LiteralPath $exp)) { $exp = Join-Path $dir.FullName 'expected.ps.txt' }
+            if (-not (Test-Path -LiteralPath $exp)) { Write-Host "::error::${name}: no expected.txt or expected.ps.txt"; exit 1 }
+            $want = (Get-Content -Raw -LiteralPath $exp) -replace "`r", ''
+
+            # Exit code implied by the expected output (fixtures README).
+            if ($want -ceq ($clean + "`n")) { $wantRc = 0 }
+            elseif ($want -cmatch '(?m)^settings drift: (missing|differs) ') { $wantRc = 1 }
+            elseif ($want -cmatch '(?m)^settings drift: not checked') { $wantRc = 2 }
+            else { Write-Host "::error::${name}: cannot derive an exit code from $exp"; exit 1 }
+
+            $lines = @(& $exe -NoProfile -File scripts/settings-drift.ps1 -Repo (Join-Path $dir.FullName 'repo.json') -Live (Join-Path $dir.FullName 'live.json') 2>$err)
+            $rc = $LASTEXITCODE
+            $got = (($lines | ForEach-Object { "$_" -replace "`r", '' }) -join "`n") + "`n"
+            # A missing or empty stderr file reads as nothing (or $null); "$()" makes it ''.
+            $errText = "$(Get-Content -Raw -LiteralPath $err -ErrorAction SilentlyContinue)"
+
+            if ($got -cne $want) {
+              Write-Host "--- expected ($exp)"; Write-Host $want
+              Write-Host "--- got"; Write-Host $got
+              Write-Host "::error::${name}: output differs from $exp"; exit 1
+            }
+            if ($rc -ne $wantRc) { Write-Host "::error::${name}: exit code $rc, expected $wantRc"; exit 1 }
+            if ($got.Contains('SENTINEL') -or $errText.Contains('SENTINEL')) {
+              Write-Host "::error::${name}: a live value (SENTINEL) reached the output"; exit 1
+            }
+            Write-Host "  ok - $name (exit $rc)"
+          }
+          if ($n -eq 0) { Write-Host "::error::no fixtures found under $fx - refusing to report a false clean pass"; exit 1 }
+          if (-not (Select-String -LiteralPath "$fx/sentinel-never-printed/live.json" -Pattern 'SENTINEL' -Quiet)) {
+            Write-Host "::error::sentinel-never-printed/live.json no longer holds a SENTINEL value - the never-print check proves nothing"; exit 1
+          }
+          Write-Host "  ok - $n fixtures"
+          exit 0
+      - name: Wrong arguments print usage and exit 2
+        run: |
+          # Two cases: a missing -Live, and a stray extra argument (which used
+          # to be accepted silently). Deleting either guard fails its own case.
+          $ErrorActionPreference = 'Continue'
+          $exe = (Get-Process -Id $PID).Path
+          foreach ($case in @(@('-Repo', 'only-one'), @('-Repo', 'a', '-Live', 'b', 'extra'))) {
+            $label = $case -join ' '
+            $out = @(& $exe -NoProfile -File scripts/settings-drift.ps1 @case 2>&1) | Out-String
+            $rc = $LASTEXITCODE
+            if (-not $out.Contains('usage:')) { Write-Host $out; Write-Host "::error::no usage message with [$label]"; exit 1 }
+            if ($rc -ne 2) { Write-Host "::error::usage exit code $rc with [$label], expected 2"; exit 1 }
+            Write-Host "  ok - [$label] prints usage, exit 2"
+          }
+          exit 0
+      - name: install.ps1 -DryRun reports drift, stays read-only, and finishes
+        run: |
+          # USERPROFILE under RUNNER_TEMP: the installer must never see the
+          # runner's real .claude. Same assertions as install.sh --dry-run.
+          # -DryRun exits 0: install.ps1's only non-zero exit is the
+          # deferred-symlink case, and a dry run defers nothing.
+          $ErrorActionPreference = 'Continue'
+          $exe = (Get-Process -Id $PID).Path
+          $fh = Join-Path $env:RUNNER_TEMP 'drift-home'
+          if (Test-Path -LiteralPath $fh) { Remove-Item -Recurse -Force -LiteralPath $fh }
+          New-Item -ItemType Directory -Force -Path (Join-Path $fh '.claude') | Out-Null
+          $live = Join-Path $fh '.claude\settings.json'
+          $repoLines = @((Get-Content -Raw -LiteralPath settings.json) -split "`r?`n")
+          $liveLines = @($repoLines | Where-Object { $_.Trim() -cne '"Read(.env)",' })
+          if ($liveLines.Count -ne $repoLines.Count - 1) {
+            Write-Host "::error::the wiring fixture is not missing exactly one rule - settings.json no longer has the expected Read(.env) line"; exit 1
+          }
+          [System.IO.File]::WriteAllText($live, ($liveLines -join "`n"), (New-Object System.Text.UTF8Encoding($false)))
+          $before = (Get-FileHash -LiteralPath $live -Algorithm SHA256).Hash
+          # Snapshot .claude only: PowerShell itself creates AppData\Roaming under a
+          # redirected USERPROFILE, which says nothing about the installer.
+          $treeBefore = @(Get-ChildItem -LiteralPath (Join-Path $fh '.claude') -Recurse -Force | ForEach-Object { $_.FullName }) -join "`n"
+
+          $env:USERPROFILE = $fh
+          $out = @(& $exe -NoProfile -File .\install.ps1 -DryRun 2>&1 | ForEach-Object { "$_" -replace "`r", '' })
+          $rc = $LASTEXITCODE
+          $out | ForEach-Object { Write-Host $_ }
+
+          if ($rc -ne 0) { Write-Host "::error::install.ps1 -DryRun exited $rc"; exit 1 }
+          foreach ($want in @(
+              '  settings drift: missing ["permissions","deny"] "Read(.env)"',
+              'agents:',
+              'skills:',
+              'Done. Restart Claude Code to pick up changes.')) {
+            if ($out -cnotcontains $want) { Write-Host "::error::installer output lacks the line: $want"; exit 1 }
+          }
+          if ((Get-FileHash -LiteralPath $live -Algorithm SHA256).Hash -ne $before) {
+            Write-Host "::error::dry-run modified the live settings.json"; exit 1
+          }
+          $treeAfter = @(Get-ChildItem -LiteralPath (Join-Path $fh '.claude') -Recurse -Force | ForEach-Object { $_.FullName }) -join "`n"
+          if ($treeAfter -cne $treeBefore) {
+            Write-Host "::error::dry-run created or removed entries under the fake .claude"; exit 1
+          }
+          Write-Host "  ok - dry-run: drift line, later sections, final line, nothing written"
+          exit 0
+      - name: install.ps1 settings.json link cases (own, foreign, dangling)
+        run: |
+          # The non-dry-run link branch, both shells in the matrix. windows-latest
+          # runs elevated, so New-Item can create the symlinks these cases need
+          # (they cannot be made on an unelevated dev box). Ownership is by
+          # resolved path, so the own case is tried absolute and relative.
+          # Caught here: a string compare (relative link judged foreign), the
+          # old blind delete of a stale link (no backup), the foreign-link rule
+          # swallowing a dangling one, and a foreign link being re-pointed.
+          $ErrorActionPreference = 'Continue'
+          $exe = (Get-Process -Id $PID).Path
+          $repoSettings = (Resolve-Path -LiteralPath settings.json).Path
+          $tmp = $env:RUNNER_TEMP
+          # The installer's Info lines are plain ASCII, but a native child's
+          # stdout is decoded with the console's OEM code page; pin UTF-8 so a
+          # non-ASCII path in the output cannot break the exact-line matches.
+          [Console]::OutputEncoding = [Text.Encoding]::UTF8
+
+          function New-Home($name) {
+            $fh = Join-Path $tmp $name
+            if (Test-Path -LiteralPath $fh) { Remove-Item -Recurse -Force -LiteralPath $fh }
+            New-Item -ItemType Directory -Force -Path (Join-Path $fh '.claude') | Out-Null
+            return $fh
+          }
+          function Invoke-Install($fh, [switch]$Uninstall) {
+            $env:USERPROFILE = $fh
+            $extra = @(); if ($Uninstall) { $extra = @('-Uninstall') }
+            $o = @(& $exe -NoProfile -File .\install.ps1 @extra 2>&1 | ForEach-Object { "$_" -replace "`r", '' })
+            $o | ForEach-Object { Write-Host $_ }
+            return [pscustomobject]@{ Out = $o; Rc = $LASTEXITCODE }
+          }
+          function Get-LinkText($path) {
+            $item = Get-Item -LiteralPath $path -Force
+            if ($item.LinkType -ne 'SymbolicLink') { return $null }
+            return ($item.Target -join '')
+          }
+          function Get-Backups($fh) {
+            return @(Get-ChildItem -Path (Join-Path $fh '.claude\settings.json.backup.*') -Force -ErrorAction SilentlyContinue)
+          }
+
+          # -- own link, absolute and relative
+          foreach ($kind in 'absolute', 'relative') {
+            $fh = New-Home "drift-home-own-$kind"
+            $link = Join-Path $fh '.claude\settings.json'
+            if ($kind -eq 'absolute') { $wantLink = $repoSettings }
+            else {
+              $from = New-Object System.Uri ((Join-Path $fh '.claude') + '\')
+              $wantLink = [System.Uri]::UnescapeDataString($from.MakeRelativeUri((New-Object System.Uri $repoSettings)).ToString()) -replace '/', '\'
+            }
+            # mklink stores relative text as given; New-Item may resolve it against the cwd.
+            if ($kind -eq 'absolute') { New-Item -ItemType SymbolicLink -Path $link -Value $wantLink | Out-Null }
+            else { cmd /c "mklink ""$link"" ""$wantLink"" >nul" }
+            if ((Get-LinkText $link) -cne $wantLink) { Write-Host "::error::$($kind): the fixture link was not created as intended"; exit 1 }
+            $r = Invoke-Install $fh
+            if ($r.Rc -ne 0) { Write-Host "::error::$($kind): install.ps1 exited $($r.Rc)"; exit 1 }
+            if ($r.Out -cnotcontains "  ok (already linked): $link") { Write-Host "::error::$($kind): an own settings.json link was not recognised as already linked"; exit 1 }
+            if (@($r.Out | Where-Object { $_ -cmatch 'settings drift|re-run after a git pull|links elsewhere' }).Count -gt 0) {
+              Write-Host "::error::$($kind): an own settings.json link got a foreign-link skip or a drift report"; exit 1
+            }
+            if ((Get-LinkText $link) -cne $wantLink) { Write-Host "::error::$($kind): the own link was re-created ($(Get-LinkText $link))"; exit 1 }
+            if ((Get-Backups $fh).Count -ne 0) { Write-Host "::error::$($kind): a backup of an own link was made"; exit 1 }
+            Write-Host "  ok - own $kind link: recognised, no drift report, link untouched"
+          }
+
+          # -- foreign link
+          $fh = New-Home 'drift-home-foreign'
+          $link = Join-Path $fh '.claude\settings.json'
+          $dot = Join-Path $tmp 'drift-dotfiles-ps'
+          New-Item -ItemType Directory -Force -Path $dot | Out-Null
+          $repoLines = @((Get-Content -Raw -LiteralPath settings.json) -split "`r?`n")
+          $dotLines = @($repoLines | Where-Object { $_.Trim() -cne '"Read(.env)",' })
+          if ($dotLines.Count -ne $repoLines.Count - 1) { Write-Host "::error::the foreign fixture is not missing exactly one rule"; exit 1 }
+          $dotFile = Join-Path $dot 'settings.json'
+          [System.IO.File]::WriteAllText($dotFile, ($dotLines -join "`n"), (New-Object System.Text.UTF8Encoding($false)))
+          $dotHash = (Get-FileHash -LiteralPath $dotFile -Algorithm SHA256).Hash
+          New-Item -ItemType SymbolicLink -Path $link -Value $dotFile | Out-Null
+          $r = Invoke-Install $fh
+          if ($r.Rc -ne 0) { Write-Host "::error::foreign: install.ps1 exited $($r.Rc)"; exit 1 }
+          if (@($r.Out | Where-Object { $_.Contains('links elsewhere and is left as is') }).Count -eq 0) { Write-Host "::error::foreign: no 'links elsewhere' line"; exit 1 }
+          if ($r.Out -cnotcontains '  settings drift: missing ["permissions","deny"] "Read(.env)"') { Write-Host "::error::foreign: no drift line"; exit 1 }
+          if ($r.Out -cnotcontains 'Done. Restart Claude Code to pick up changes.') { Write-Host "::error::foreign: installer did not finish"; exit 1 }
+          if ((Get-LinkText $link) -cne $dotFile) { Write-Host "::error::foreign: the symlink was re-pointed"; exit 1 }
+          if ((Get-FileHash -LiteralPath $dotFile -Algorithm SHA256).Hash -ne $dotHash) { Write-Host "::error::foreign: the link target was modified"; exit 1 }
+          if ((Get-Backups $fh).Count -ne 0) { Write-Host "::error::foreign: a backup of the foreign link was made"; exit 1 }
+          Write-Host "  ok - foreign link: skipped, drift reported, target untouched"
+
+          # -- dangling link
+          $fh = New-Home 'drift-home-dangling'
+          $link = Join-Path $fh '.claude\settings.json'
+          $gone = Join-Path $tmp 'drift-unmounted-ps\settings.json'
+          # mklink (elevated runner) rather than New-Item, which may resolve or
+          # reject a missing target; then prove the fixture is what it claims to
+          # be before the installer sees it: a reparse point whose text is the
+          # missing target. A fixture that silently was not created dangling
+          # would let the dangling branch go untested while the step stays green.
+          cmd /c "mklink ""$link"" ""$gone"" >nul"
+          $attrs = [System.IO.File]::GetAttributes($link)
+          if (-not ($attrs -band [System.IO.FileAttributes]::ReparsePoint)) { Write-Host "::error::the dangling fixture is not a reparse point"; exit 1 }
+          if ((Get-LinkText $link) -cne $gone) { Write-Host "::error::the dangling fixture does not hold the missing target's path"; exit 1 }
+          if (Test-Path -LiteralPath $gone) { Write-Host "::error::the dangling fixture's target exists"; exit 1 }
+          $r = Invoke-Install $fh
+          if ($r.Rc -ne 0) { Write-Host "::error::dangling: install.ps1 exited $($r.Rc)"; exit 1 }
+          if (@($r.Out | Where-Object { $_ -cmatch '^  backed up dangling symlink -> settings\.json\.backup\.\d+$' }).Count -ne 1) { Write-Host "::error::dangling: no 'backed up dangling symlink' line"; exit 1 }
+          if (@($r.Out | Where-Object { $_ -cmatch 'settings drift' }).Count -gt 0) { Write-Host "::error::dangling: got a drift report instead of being re-linked"; exit 1 }
+          $backups = Get-Backups $fh
+          if ($backups.Count -ne 1) { Write-Host "::error::dangling: expected exactly one backup, got $($backups.Count)"; exit 1 }
+          if ((Get-LinkText $backups[0].FullName) -cne $gone) { Write-Host "::error::dangling: the backup is not a symlink to the old target"; exit 1 }
+          if ((Get-LinkText $link) -ine $repoSettings) { Write-Host "::error::dangling: settings.json does not now link to the repo settings.json"; exit 1 }
+          Write-Host "  ok - dangling link: backed up (still a link to the old target), re-linked"
+
+          # -- uninstall over that state: settings.json links to the repo, the
+          # backup is a link to the missing target. The restore must rename the
+          # backup as a link (Move-Item would try to resolve the missing target
+          # and fail). Caught here: that Move-Item restore, and an uninstall
+          # that leaves the slot empty.
+          $r = Invoke-Install $fh -Uninstall
+          if ($r.Rc -ne 0) { Write-Host "::error::dangling uninstall: install.ps1 -Uninstall exited $($r.Rc)"; exit 1 }
+          if (@($r.Out | Where-Object { $_ -cmatch '^  restored backup: settings\.json\.backup\.\d+$' }).Count -ne 1) { Write-Host "::error::dangling uninstall: no 'restored backup' line for settings.json"; exit 1 }
+          if (-not ([System.IO.File]::GetAttributes($link) -band [System.IO.FileAttributes]::ReparsePoint)) { Write-Host "::error::dangling uninstall: settings.json is not a link after the restore"; exit 1 }
+          if ((Get-LinkText $link) -cne $gone) { Write-Host "::error::dangling uninstall: settings.json is not restored as a link to the old target"; exit 1 }
+          if (Test-Path -LiteralPath $gone) { Write-Host "::error::dangling uninstall: the old target exists"; exit 1 }
+          if ((Get-Backups $fh).Count -ne 0) { Write-Host "::error::dangling uninstall: the backup is still there after being restored"; exit 1 }
+          Write-Host "  ok - uninstall: dangling link restored from its backup"
+
+          # -- hard-linked real file. LinkType reports HardLink for any file with
+          # a link count above 1, and .Target then lists the OTHER names. Caught
+          # here: Get-LinkTarget accepting HardLink - with two other names the
+          # joined names resolve to nothing, so the real file read as dangling
+          # and was deleted with no backup; with one it read as a foreign link.
+          $fh = New-Home 'drift-home-hardlink'
+          $link = Join-Path $fh '.claude\settings.json'
+          $repoLines = @((Get-Content -Raw -LiteralPath settings.json) -split "`r?`n")
+          $hlLines = @($repoLines | Where-Object { $_.Trim() -cne '"Read(.env)",' })
+          if ($hlLines.Count -ne $repoLines.Count - 1) { Write-Host "::error::hardlink: the fixture is not missing exactly one rule"; exit 1 }
+          [System.IO.File]::WriteAllText($link, ($hlLines -join "`n"), (New-Object System.Text.UTF8Encoding($false)))
+          New-Item -ItemType HardLink -Path (Join-Path $fh 'other1.json') -Value $link | Out-Null
+          New-Item -ItemType HardLink -Path (Join-Path $fh 'other2.json') -Value $link | Out-Null
+          $hlHash = (Get-FileHash -LiteralPath $link -Algorithm SHA256).Hash
+          $r = Invoke-Install $fh
+          if ($r.Rc -ne 0) { Write-Host "::error::hardlink: install.ps1 exited $($r.Rc)"; exit 1 }
+          if (@($r.Out | Where-Object { $_.Contains('skip (real settings.json exists') }).Count -eq 0) { Write-Host "::error::hardlink: no 'real settings.json exists' line"; exit 1 }
+          if ($r.Out -cnotcontains '  settings drift: missing ["permissions","deny"] "Read(.env)"') { Write-Host "::error::hardlink: no drift line"; exit 1 }
+          if (-not (Test-Path -LiteralPath $link)) { Write-Host "::error::hardlink: the hard-linked settings.json was deleted"; exit 1 }
+          if ((Get-FileHash -LiteralPath $link -Algorithm SHA256).Hash -ne $hlHash) { Write-Host "::error::hardlink: settings.json content changed"; exit 1 }
+          if ((Get-Backups $fh).Count -ne 0) { Write-Host "::error::hardlink: a backup was made"; exit 1 }
+          Write-Host "  ok - hard-linked real file: skipped, drift reported, file intact"
+          exit 0

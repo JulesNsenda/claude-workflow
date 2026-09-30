@@ -1,0 +1,5 @@
+{
+  "workflowSizeGuideline": "small",
+  "permissions": {"deny": ["Read(.env)"]},
+  "hooks": {"PostToolUse": [{"matcher": "Edit", "hooks": [{"type": "command", "command": "fmt-edit"}]}]}
+}

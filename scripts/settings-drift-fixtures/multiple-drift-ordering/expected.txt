@@ -1,0 +1,3 @@
+settings drift: differs ["model"] repo "opus", live string
+settings drift: missing ["permissions","deny"] "Read(.env)"
+settings drift: missing ["cleanupPeriodDays"] 30

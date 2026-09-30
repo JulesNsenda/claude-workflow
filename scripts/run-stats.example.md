@@ -47,7 +47,7 @@ escalated_from: none
 | Key | Meaning |
 |---|---|
 | `date`, `slug` | Match the plan filename. |
-| `gear` | `full` or `light`. |
+| `gear` | `full` - only full-gear runs write this block. |
 | `effort_plan`, `effort_diff` | Effort the critics ran at in each pass. |
 | `findings_*_actioned` | Findings that changed the work. |
 | `findings_*_rejected` | Findings consciously rejected **with a written reason**. Not a failure — this is the critic-noise signal. |

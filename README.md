@@ -423,7 +423,39 @@ replaced in place. **Exception: `settings.json` is never displaced** — an
 existing real settings file holds your accumulated permission decisions and
 hook wiring, so the installer skips it and tells you to merge the repo's
 [`settings.json`](./settings.json) manually — and until you merge it, **none of
-the repo's permission rules are active** for you.
+the repo's permission rules are active** for you. A `settings.json` that is a
+symlink pointing somewhere else (say, into a dotfiles repo) gets the same
+treatment: it is left alone, not re-pointed at this repo. "Is this link
+mine?" is decided by file identity (`-ef` in the shell, the resolved path in
+PowerShell), not by comparing the link text, so a relative link to this repo's
+`settings.json` is recognised as yours and left as is. A **dangling** symlink
+(its target is gone, or only unmounted for now) holds no data, so it is
+re-linked to the repo — but the link itself is first kept as
+`settings.json.backup.<timestamp>`, so the old pointer stays restorable.
+
+To make the merge less of a guess, the installer then runs a **drift report**
+and prints every setting the repo has that yours lacks or differs on, e.g.
+`settings drift: missing ["permissions","deny"] "Read(.env)"`. It prints paths and the
+repo's values only — never a value from your file. Drift arrives with a
+`git pull`, not just at install time, so re-run the report afterwards:
+
+```bash
+sh scripts/settings-drift.sh settings.json ~/.claude/settings.json
+```
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\settings-drift.ps1 -Repo .\settings.json -Live $env:USERPROFILE\.claude\settings.json
+```
+
+The installers print this command for you at the end of the report (`sh` plus
+shell-quoted paths; on Windows the current PowerShell host with
+`-NoProfile -ExecutionPolicy Bypass -File` and single-quoted paths), so it
+pastes as it stands.
+
+The shell version needs `jq`; without it, it says `settings drift: not checked - jq
+not found` and changes nothing (the PowerShell version has no dependencies). The
+report is **one-directional**: it sees what the repo adds, not what it later
+removes, so a rule dropped from the repo's `settings.json` stays in your merged
+file until you delete it — the CHANGELOG lists such removals.
 
 ### Uninstall
 
@@ -535,7 +567,12 @@ machine, check that setting first.
 ## Repo hygiene
 
 CI runs `shellcheck` on the shell scripts, PSScriptAnalyzer on the PowerShell
-installer, a **smoke test** that parses
+installer and the PowerShell drift script, two **settings-drift** jobs (the
+fixtures in [`scripts/settings-drift-fixtures/`](./scripts/settings-drift-fixtures/README.md)
+run through `settings-drift.sh` on Linux and `settings-drift.ps1` under Windows
+PowerShell 5.1 and PowerShell 7, plus the installers run against a scratch home
+to check the drift report, the symlink cases and that a dry run writes nothing),
+a **smoke test** that parses
 [`scripts/run-stats.example.md`](./scripts/run-stats.example.md) with
 `run-stats.sh` — so the format doc and the parser can't drift apart silently —
 a **reference check** ([`ref-check.sh`](./scripts/ref-check.sh)) that fails the

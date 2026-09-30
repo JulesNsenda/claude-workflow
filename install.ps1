@@ -11,7 +11,10 @@
     ~/.claude/skills/<name>     -> <repo>/skills/<name>   (one link per skill dir)
 
   Safe to re-run. Any existing REAL file/dir at a target is backed up to
-  "<target>.backup.<timestamp>" before linking; existing links are replaced.
+  "<target>.backup.<timestamp>" before linking; existing links are replaced -
+  except settings.json, where a live link to another file is the user's own
+  choice and is left alone, and a dangling link is backed up (the link itself)
+  rather than silently dropped.
   If a step can't complete, the original is restored — the script never leaves
   a target empty.
 
@@ -47,13 +50,68 @@ function Info($msg) { Write-Host "  $msg" }
 
 function Get-LinkTarget($path) {
   $item = Get-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
-  if ($item -and $item.LinkType) { return ($item.Target -join '') }  # symlink or junction
+  if (-not $item -and (Test-IsLink $path)) {
+    # Get-Item can fail on a dangling link (Windows PowerShell 5.1 tries to
+    # follow it); listing the parent directory returns the link entry itself.
+    # Only worth doing for a path that IS a link: Get-Item also returns nothing
+    # for a missing one, and re-listing the directory for that is wasted work.
+    $leaf = Split-Path $path -Leaf
+    $item = Get-ChildItem -LiteralPath (Split-Path -Parent $path) -Force -ErrorAction SilentlyContinue |
+      Where-Object { $_.Name -ieq $leaf } | Select-Object -First 1
+  }
+  # Only a symlink or junction is a link here. LinkType is also set to HardLink
+  # for ANY file with a link count above 1 (5.1 and 7), and its .Target then lists
+  # the file's other names; treating that as a link read a real, hard-linked
+  # settings.json as dangling and deleted it without a backup. A hard link is
+  # real data: fall through to $null.
+  if ($item -and ($item.LinkType -ieq 'SymbolicLink' -or $item.LinkType -ieq 'Junction')) { return ($item.Target -join '') }
   return $null
+}
+
+function Test-IsLink($path) {
+  # True for anything with a reparse point, without following it (a dangling
+  # link has nothing to follow). GetAttributes throws on a missing path.
+  try { return [bool]([System.IO.File]::GetAttributes($path) -band [System.IO.FileAttributes]::ReparsePoint) }
+  catch { return $false }
+}
+
+function Get-ResolvedLinkTarget($path) {
+  # Full path a link points at, or $null if $path is not a link. A relative
+  # target is relative to the link's own directory, not the cwd. Compared by
+  # resolved path rather than link text so an equivalent spelling still matches.
+  $t = Get-LinkTarget $path
+  if (-not $t) { return $null }
+  if (-not [System.IO.Path]::IsPathRooted($t)) { $t = Join-Path (Split-Path -Parent $path) $t }
+  try { return [System.IO.Path]::GetFullPath($t) } catch { return $t }
+}
+
+function Test-IsDangling($path) {
+  # A link whose target is missing (or unreadable). Test-Path on the link itself
+  # is not trusted for this: 5.1 may or may not follow it.
+  if (-not (Test-IsLink $path)) { return $false }
+  $target = Get-ResolvedLinkTarget $path
+  return (-not $target) -or (-not (Test-Path -LiteralPath $target))
+}
+
+function Move-LinkItem($from, $to) {
+  # Renames a link itself, file or directory flavoured; Move-Item would try to
+  # resolve a missing target. Every backup and restore here is a rename within
+  # one directory, so it serves real files and directories too.
+  if ([System.IO.File]::GetAttributes($from) -band [System.IO.FileAttributes]::Directory) { [System.IO.Directory]::Move($from, $to) }
+  else { [System.IO.File]::Move($from, $to) }
+}
+
+function Test-LinksTo($path, $source) {
+  $resolved = Get-ResolvedLinkTarget $path
+  if (-not $resolved) { return $false }
+  return $resolved -ieq [System.IO.Path]::GetFullPath($source)
 }
 
 function New-Link {
   # Returns $true on success (or dry-run/no-op), $false if the step was deferred.
-  param([string]$Source, [string]$Target, [switch]$IsDir)
+  # -BackupDangling keeps a dangling link (renamed, link and all) instead of
+  # deleting it: its target may only be unmounted right now.
+  param([string]$Source, [string]$Target, [switch]$IsDir, [switch]$BackupDangling)
 
   if (-not (Test-Path -LiteralPath $Source)) {
     Info "skip (source missing): $Source"
@@ -61,7 +119,7 @@ function New-Link {
   }
 
   # Already the correct link? Nothing to do.
-  if ((Get-LinkTarget $Target) -ieq $Source) {
+  if (Test-LinksTo $Target $Source) {
     Info "ok (already linked): $Target"
     return $true
   }
@@ -70,30 +128,39 @@ function New-Link {
   $shortSource = $Source.Replace($env:USERPROFILE, '~')
 
   if ($DryRun) {
-    if (Test-Path -LiteralPath $Target) { Info "would back up + link: $shortTarget -> $shortSource" }
+    if ((Test-Path -LiteralPath $Target) -or ($BackupDangling -and (Test-IsDangling $Target))) { Info "would back up + link: $shortTarget -> $shortSource" }
     else                                { Info "would link: $shortTarget -> $shortSource" }
     return $true
   }
 
   # Stash whatever is at the target: delete a stale link, back up real data.
   $backup = $null
-  if (Get-LinkTarget $Target) {
+  $backupLabel = 'existing'
+  if ($BackupDangling -and (Test-IsDangling $Target)) {
+    $backup = "$Target.backup.$Stamp"
+    try { Move-LinkItem $Target $backup }
+    catch {
+      Info "skip (could not back up dangling link - left as is)"
+      return $true
+    }
+    $backupLabel = 'dangling symlink'
+  } elseif (Get-LinkTarget $Target) {
     (Get-Item -LiteralPath $Target -Force).Delete()
   } elseif (Test-Path -LiteralPath $Target) {
     $backup = "$Target.backup.$Stamp"
-    Move-Item -LiteralPath $Target -Destination $backup
+    Move-LinkItem $Target $backup
   }
 
   # Prefer a real symlink; fall back to a junction for directories only.
   try {
     New-Item -ItemType SymbolicLink -Path $Target -Value $Source -Force | Out-Null
-    if ($backup) { Info "backed up existing -> $(Split-Path $backup -Leaf)" }
+    if ($backup) { Info "backed up $backupLabel -> $(Split-Path $backup -Leaf)" }
     Info "linked (symlink): $shortTarget -> $shortSource"
     return $true
   } catch {
     if ($IsDir) {
       New-Item -ItemType Junction -Path $Target -Value $Source -Force | Out-Null
-      if ($backup) { Info "backed up existing -> $(Split-Path $backup -Leaf)" }
+      if ($backup) { Info "backed up $backupLabel -> $(Split-Path $backup -Leaf)" }
       Info "linked (junction): $shortTarget -> $shortSource"
       return $true
     }
@@ -101,13 +168,13 @@ function New-Link {
     # unprivileged-symlink flag; cmd's mklink honors it. Try it before
     # deferring (redirects inside cmd so a privilege failure stays silent).
     cmd /c "mklink ""$Target"" ""$Source"" >nul 2>&1"
-    if ((Get-LinkTarget $Target) -ieq $Source) {
-      if ($backup) { Info "backed up existing -> $(Split-Path $backup -Leaf)" }
+    if (Test-LinksTo $Target $Source) {
+      if ($backup) { Info "backed up $backupLabel -> $(Split-Path $backup -Leaf)" }
       Info "linked (symlink): $shortTarget -> $shortSource"
       return $true
     }
     # Files: no elevation-free link that survives `git pull`. Restore and defer.
-    if ($backup) { Move-Item -LiteralPath $backup -Destination $Target }
+    if ($backup) { Move-LinkItem $backup $Target }
     Info "DEFERRED (needs elevation): $shortTarget"
     $script:Deferred += $shortTarget
     return $false
@@ -123,10 +190,14 @@ function Remove-Link {
 
   $short = $Target.Replace($env:USERPROFILE, '~')
   $removed = $false
-  $linkTarget = Get-LinkTarget $Target
+  $linkTarget = Get-ResolvedLinkTarget $Target
 
   if ($linkTarget) {
-    if ($linkTarget.StartsWith($RepoDir, [System.StringComparison]::OrdinalIgnoreCase)) {
+    # The prefix ends in a separator so a sibling clone (claude-workflow-fork)
+    # is not claimed; the repo root itself is matched exactly.
+    $repoFull = [System.IO.Path]::GetFullPath($RepoDir).TrimEnd('\', '/')
+    $repoPrefix = $repoFull + [System.IO.Path]::DirectorySeparatorChar
+    if ($linkTarget -ieq $repoFull -or $linkTarget.StartsWith($repoPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
       if ($DryRun) { Info "would unlink: $short" }
       else { (Get-Item -LiteralPath $Target -Force).Delete(); Info "unlinked: $short" }
       $removed = $true
@@ -139,10 +210,16 @@ function Remove-Link {
 
   # Backup names are timestamped, so the last one sorted by name is newest.
   $backups = @(Get-ChildItem -Path "$Target.backup.*" -Force -ErrorAction SilentlyContinue | Sort-Object Name)
-  if ($backups.Count -gt 0 -and ($removed -or -not (Test-Path -LiteralPath $Target))) {
+  if ($backups.Count -gt 0 -and ($removed -or -not ((Test-Path -LiteralPath $Target) -or (Test-IsLink $Target)))) {
     $newest = $backups[-1]
     if ($DryRun) { Info "would restore backup: $($newest.Name)" }
-    else { Move-Item -LiteralPath $newest.FullName -Destination $Target; Info "restored backup: $($newest.Name)" }
+    else {
+      # Move-LinkItem for links and real data alike: a backed-up dangling link
+      # must be renamed as a link (Move-Item would try to resolve its missing
+      # target), and it renames a real file or directory just as well.
+      Move-LinkItem $newest.FullName $Target
+      Info "restored backup: $($newest.Name)"
+    }
   }
 }
 
@@ -184,8 +261,12 @@ if ($Uninstall) {
   exit 0
 }
 
-New-Item -ItemType Directory -Force -Path (Join-Path $ClaudeDir 'skills') | Out-Null
-New-Item -ItemType Directory -Force -Path (Join-Path $ClaudeDir 'agents') | Out-Null
+# A dry run must create nothing - not even the target directories. Every later
+# dry-run path only tests existence of targets, so missing directories are harmless.
+if (-not $DryRun) {
+  New-Item -ItemType Directory -Force -Path (Join-Path $ClaudeDir 'skills') | Out-Null
+  New-Item -ItemType Directory -Force -Path (Join-Path $ClaudeDir 'agents') | Out-Null
+}
 
 Write-Host "CLAUDE.md:"
 New-Link -Source (Join-Path $RepoDir 'CLAUDE.md') -Target (Join-Path $ClaudeDir 'CLAUDE.md') | Out-Null
@@ -194,12 +275,57 @@ Write-Host ""
 Write-Host "settings.json:"
 # A user's existing REAL settings.json holds accumulated permission decisions
 # and hook wiring - never displace it, even with a backup. Link only into an
-# empty slot (or over an existing link, which holds no data).
+# empty slot, or over a link that IS this repo's settings.json (decided by
+# resolved path, so a relative link still counts). A live link to another file
+# (e.g. into a dotfiles repo) is the user's own choice and is treated like a real
+# file. A dangling link holds no data, but its target may only be unmounted right
+# now, so the link itself is backed up before re-linking.
 $settingsTarget = Join-Path $ClaudeDir 'settings.json'
-if ((Test-Path -LiteralPath $settingsTarget) -and -not (Get-LinkTarget $settingsTarget)) {
-  Info "skip (real settings.json exists - the repo's permission rules are NOT active until you merge $(Join-Path $RepoDir 'settings.json') into it)"
+$settingsRepo   = Join-Path $RepoDir 'settings.json'
+
+function Invoke-DriftReport {
+  # Indent the drift script's output like Info. The script's exit codes 1 (drift)
+  # and 2 (not checked) are normal and don't throw; anything that does throw is
+  # reported with a fixed line, never the exception text (it could quote live
+  # content), and the install carries on.
+  try {
+    $lines = @(& (Join-Path $RepoDir 'scripts\settings-drift.ps1') -Repo $settingsRepo -Live $settingsTarget)
+    foreach ($l in $lines) { Info $l }
+  } catch {
+    Info "settings drift: not checked - the drift script failed"
+  }
+  # The script's exit code 1/2 lands in $LASTEXITCODE; left there it would become
+  # this installer's own exit code.
+  $global:LASTEXITCODE = 0
+  # The current host (5.1 or 7), with the policy override a fresh shell may need
+  # to run an unsigned script; paths single-quoted, with PowerShell's own
+  # escaper so curly quotes (which it also treats as quotes) are doubled too.
+  $hostExe = (Get-Process -Id $PID).Path
+  $q = { param($s) "'" + [System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent($s) + "'" }
+  Info ("re-run after a git pull: & " + (& $q $hostExe) + " -NoProfile -ExecutionPolicy Bypass -File " + (& $q (Join-Path $RepoDir 'scripts\settings-drift.ps1')) + " -Repo " + (& $q $settingsRepo) + " -Live " + (& $q $settingsTarget))
+}
+
+# Gated on the reparse-point test as well as the link type (belt and braces): a
+# real file must never reach the link branches, whatever LinkType reports.
+$settingsResolved = $null                                    # stays $null for a non-link
+if (Test-IsLink $settingsTarget) { $settingsResolved = Get-ResolvedLinkTarget $settingsTarget }
+if ((Test-IsLink $settingsTarget) -and -not $settingsResolved) {
+  # A reparse point whose text can't be read: not provably dangling, not ours.
+  Info "skip (settings.json is a link this installer cannot read - left as is)"
+} elseif ($settingsResolved) {
+  if ($settingsResolved -ieq [System.IO.Path]::GetFullPath($settingsRepo)) {
+    New-Link -Source $settingsRepo -Target $settingsTarget | Out-Null   # reports "already linked"
+  } elseif (-not (Test-Path -LiteralPath $settingsResolved)) {
+    New-Link -Source $settingsRepo -Target $settingsTarget -BackupDangling | Out-Null
+  } else {
+    Info "skip (settings.json links elsewhere and is left as is - the repo's permission rules are NOT active unless that file has $settingsRepo merged into it)"
+    Invoke-DriftReport
+  }
+} elseif (Test-Path -LiteralPath $settingsTarget) {
+  Info "skip (real settings.json exists - the repo's permission rules are NOT active until you merge $settingsRepo into it)"
+  Invoke-DriftReport
 } else {
-  New-Link -Source (Join-Path $RepoDir 'settings.json') -Target $settingsTarget | Out-Null
+  New-Link -Source $settingsRepo -Target $settingsTarget | Out-Null
 }
 
 Write-Host ""

@@ -1,0 +1,8 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {"hooks": [{"command": "fmt-write", "type": "command"}], "matcher": "Write"},
+      {"hooks": [{"command": "fmt-edit", "type": "command"}], "matcher": "Edit"}
+    ]
+  }
+}

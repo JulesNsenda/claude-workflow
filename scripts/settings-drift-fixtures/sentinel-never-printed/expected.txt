@@ -1,0 +1,3 @@
+settings drift: differs ["workflowSizeGuideline"] repo "small", live string
+settings drift: differs ["permissions"] repo object, live string
+settings drift: missing ["hooks","PostToolUse"] {"hooks":[{"command":"fmt-edit","type":"command"}],"matcher":"Edit"}
