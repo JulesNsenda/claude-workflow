@@ -58,7 +58,7 @@ findings_diff_rejected: 3
 findings_diff_dropped: 0
 escaped: 1
 agents_spawned: 11
-gates_failed_first_pass: 2
+gates_failed: 2,4
 escalated_from: none
 ```
 
@@ -74,12 +74,17 @@ escalated_from: none
 | `findings_*_dropped` | `medium`/`low` findings dropped without individual reasons. Counted so the rejection rate can't read as a whole-panel number when it only saw the severe tail. |
 | `escaped` | Defects **both critic passes missed**, caught at Gate 3, Gate 4, or by you afterwards. The most important number here. |
 | `agents_spawned` | Total across both phases, including fix-loop re-runs. |
-| `gates_failed_first_pass` | How many of gates 1–5 needed a fix loop. `none` if all passed first time. Gate 5's re-verification counts as part of Gate 5, not as a second failure of gates 3–4. |
+| `gates_failed` | Which of gates 1–5 needed a fix loop: `none`, `pending`, `unknown`, or a list such as `2,4`. Spaces around commas are ignored, brackets are dropped, order is normalised and duplicates collapsed, so `[4, 2]` reads as `2,4`. Each gate is listed once however many loops it took. Gate 5's re-verification counts as Gate 5, not as a second failure of gates 3–4. It is a dimension, not a ratio counter: apart from `pending`, it never excludes a run from the ratios. A value that is none of those is reported on its own line. |
+| `gates_failed_first_pass` | **Legacy only.** The older count of gates that needed a fix loop. Old blocks keep parsing and show as `n=2` in the GATES column; new blocks don't write it. |
 | `escalated_from` | The gear the task *started* at if it moved up (`skip`, `light`); `none` if it started where it finished. |
 
 ## Sentinels
 
 - `none` — knowably empty.
+- `pending` — **not reached yet**. Any key holding it keeps the run out of the
+  ratios (both numerator and denominator) and lists it as still pending,
+  unfinished or abandoned. Closing a run resolves every `pending` to a real
+  value or `unknown`.
 - `unknown` — **not knowable**. Write this rather than guessing. A run whose
   counters aren't all integers is dropped from the ratios **entirely** — both
   numerator and denominator — and reported as excluded. Leaving a counter out,
