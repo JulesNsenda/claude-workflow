@@ -69,7 +69,14 @@ jobs:
           fixture="$RUNNER_TEMP/plans-fixture"
           mkdir -p "$fixture"
           cp scripts/run-stats.example.md "$fixture/"
-          out=$(bash scripts/run-stats.sh "$fixture")
+          # Which awk ran is part of the evidence: the parser is only ever
+          # exercised on this runner's default, and mawk vs gawk differences
+          # (see the CRLF fixture below) are exactly what a bare green hides.
+          { awk -W version 2>/dev/null </dev/null || awk --version </dev/null; } | head -1 || true
+          # stderr is captured apart from stdout: any warning at all (near-miss
+          # heading, unclosed fence, second block) means the example drifted.
+          out=$(bash scripts/run-stats.sh "$fixture" 2>"$RUNNER_TEMP/rs-canonical.err")
+          err=$(cat "$RUNNER_TEMP/rs-canonical.err")
           echo "$out"
           # Assert computed values, not boilerplate: a key rename in either the
           # fixture or the parser changes these numbers or trips a warning.
@@ -79,10 +86,19 @@ jobs:
             || { echo "::error::arithmetic changed — expected a denominator of 14"; exit 1; }
           echo "$out" | grep -q 'escaped both passes      7.1%' \
             || { echo "::error::escape rate changed — expected 7.1%"; exit 1; }
-          # Any of these lines means a key the parser wanted was missing or
-          # unusable — i.e. the format doc and the parser have drifted.
-          if echo "$out" | grep -qE '^(skipped:|[0-9]+ counter|[0-9]+ run\(s\) excluded)'; then
-            echo "::error::fixture keys drifted from the parser allowlist"; exit 1
+          # Two checks that do not depend on any message's wording. The example
+          # must be warning-free (stderr empty), and nothing may print after the
+          # last ratio line: diagnostics() and the listings come after it, so if
+          # a counter, a skipped block, an unfilled section or a duplicate ever
+          # shows up, the last non-empty line is no longer the "dropped" line.
+          # Print what is there, so the failure says which.
+          last=$(printf '%s\n' "$out" | grep -v '^$' | tail -1)
+          case $last in
+            *'dropped without individual reasons'*) ;;
+            *) printf '%s\n' "$out" | tail -5 | sed 's/^/::error::example produced a trailing diagnostic: /'; exit 1 ;;
+          esac
+          if [ -n "$err" ]; then
+            printf '%s\n' "$err" | sed 's/^/::error::example produced a warning: /'; exit 1
           fi
       - name: Handle the empty case without dying
         run: |
@@ -90,6 +106,452 @@ jobs:
           mkdir -p "$empty"
           bash scripts/run-stats.sh "$empty" | grep -q 'nothing to aggregate' \
             || { echo "::error::empty directory not handled"; exit 1; }
+      - name: Prove every parser path can fail, one fixture each
+        run: |
+          # Same house rule as the ref-check job: each fixture asserts the
+          # message of THE path it exercises, never just an exit status, and each
+          # was verified by mutation (neuter the guard in a copy of the script;
+          # the fixture must go red with its own error). The parser always exits
+          # 0, so the message is the only thing there is to assert on.
+          fx="$RUNNER_TEMP/rs-fixture"
+          rs="$PWD/scripts/run-stats.sh"
+
+          fresh() { rm -rf "$fx"; mkdir -p "$fx"; }
+
+          # A complete block: $1 = date, $2 = slug.
+          block() {
+            printf '```yaml\ndate: %s\nslug: %s\ngear: full\neffort_plan: high\neffort_diff: high\n' "$1" "$2"
+            printf 'findings_plan_actioned: 1\nfindings_plan_rejected: 0\nfindings_plan_dropped: 0\n'
+            printf 'findings_diff_actioned: 1\nfindings_diff_rejected: 0\nfindings_diff_dropped: 0\n'
+            printf 'escaped: 0\nagents_spawned: 3\ngates_failed_first_pass: none\nescalated_from: none\n```\n'
+          }
+
+          # stdout + stderr, from inside the fixture dir; args default to the dir
+          # itself (absolute, so listings read $fx/...). Callers on the exit-1
+          # paths add || true.
+          run() { out=$(cd "$fx" && bash "$rs" "${@:-$fx}" 2>&1 </dev/null); }
+
+          # A "## Run stats" heading to start a plan; the same block cut off before
+          # its closing fence; the assertion for a single counted run.
+          head_run() { printf '# P\n\n## Run stats\n\n'; }
+          open_block() { block "$@" | sed '$d'; }
+          one_run() { expect 'Ratios over 1 complete run(s).' "$1"; }
+
+          # The assertions record a failure and carry on, so a broken parser (or a
+          # mutant) shows EVERY fixture it breaks in one run; the step exits
+          # non-zero once, at the end.
+          fail=0
+          red() { echo "::error::$1"; printf '%s\n' "$out" | cat -v; fail=1; }
+
+          # $1 = fixed string that must appear, $2 = label
+          expect() {
+            if printf '%s\n' "$out" | grep -qF -- "$1"; then echo "  ok - $2"
+            else red "$2: expected message not found: $1"; fi
+          }
+          # $1 = fixed string that must NOT appear, $2 = label
+          refute() {
+            if printf '%s\n' "$out" | grep -qF -- "$1"; then red "$2: unexpected output present: $1"; fi
+          }
+          # $1 = raw byte sequence (printf escapes) that must NOT appear anywhere.
+          refute_bytes() {
+            if printf '%s' "$out" | grep -qF -- "$(printf "$1")"; then red "$2: raw control bytes reached the output"; fi
+          }
+
+          # 1 - suffixed heading parses, "Run statsheet" does not, and two
+          # blocks with one (date, slug) but different values in ONE file are
+          # two runs, not a duplicate.
+          fresh; cp scripts/run-stats.example.md "$fx/plan.md"
+          { printf '\n## Run stats — phase 2\n\n'; block 2026-07-25 opus-5-adoption
+            printf '\n## Run statsheet\n\n'; block 2026-07-26 not-a-stats-heading; } >> "$fx/plan.md"
+          run
+          expect 'Ratios over 2 complete run(s).' 'fixture 1 (suffixed heading in, "Run statsheet" out)'
+          refute 'duplicate block' 'fixture 1 (same-file repeat with new values is not a duplicate)'
+          refute 'pair(s) appear' 'fixture 1 (same-file repeat is not a cross-file collision)'
+
+          # 2 - a duplicate is a block with identical values, in another file
+          # too. The same date and slug with different values is two plans that
+          # happen to share a name, not a duplicate.
+          fresh
+          { printf '# A\n\n## Run stats\n\n'; block 2026-08-01 copied-plan; } > "$fx/a.md"
+          { printf '# B\n\n## Run stats\n\n'; block 2026-08-01 copied-plan; } > "$fx/b.md"
+          run
+          expect '1 duplicate block(s) (identical values)' 'fixture 2 (cross-file identical copy)'
+          { printf '# B\n\n## Run stats\n\n'; block 2026-08-01 copied-plan | sed 's/^agents_spawned: 3$/agents_spawned: 4/'; } > "$fx/b.md"
+          run
+          refute 'duplicate block' 'fixture 2 (same date and slug, different values, is not a duplicate)'
+
+          # 3 - the same block pasted twice in one file is a duplicate.
+          fresh
+          { printf '# A\n\n## Run stats\n\n'; block 2026-08-01 pasted
+            printf '\n## Run stats — again\n\n'; block 2026-08-01 pasted; } > "$fx/a.md"
+          run
+          expect '1 duplicate block(s) (identical values)' 'fixture 3 (same-file identical paste)'
+
+          # 4 - one directory, three spellings, is counted once.
+          fresh
+          { printf '# A\n\n## Run stats\n\n'; block 2026-08-01 only-once; } > "$fx/a.md"
+          run "$fx" "$fx/" .
+          one_run 'fixture 4 (directory spelled three ways is deduped)'
+
+          # 5 - a plain relative path (not assignment-shaped) still parses.
+          fresh; mkdir -p "$fx/sub/dir"
+          { printf '# A\n\n## Run stats\n\n'; block 2026-08-01 relative-path; } > "$fx/sub/dir/p.md"
+          run sub/dir
+          one_run 'fixture 5 (relative sub/dir parses)'
+
+          # 6 - CDPATH must not defeat the directory dedupe: with CDPATH=. a bare
+          # `cd plans` prints the path and would canonicalise differently.
+          fresh; mkdir -p "$fx/plans"
+          { printf '# A\n\n## Run stats\n\n'; block 2026-08-01 cdpath; } > "$fx/plans/p.md"
+          out=$(cd "$fx" && CDPATH=. bash "$rs" plans ./plans 2>&1 </dev/null)
+          one_run 'fixture 6 (CDPATH does not split one directory in two)'
+
+          # 7 - near-miss headings are warned about, each case on its own; an
+          # H1 title is not. (Two spaces and the right case is a heading: 34.)
+          fresh
+          printf '# Run stats\n\n## run stats\n\n  ## Run Stats\n\n### Run stats\n' > "$fx/near.md"
+          run
+          expect "heading not parsed (expected \"## Run stats\"): $fx/near.md:3" 'fixture 7 (lower-case near miss)'
+          expect "heading not parsed (expected \"## Run stats\"): $fx/near.md:5" 'fixture 7 (indented, mis-cased near miss)'
+          expect "heading not parsed (expected \"## Run stats\"): $fx/near.md:7" 'fixture 7 (### near miss)'
+          refute "$fx/near.md:1" 'fixture 7 (H1 must not warn)'
+
+          # 8 - a near miss quoted inside a fence is text, not a heading.
+          fresh
+          printf '# P\n\n## Notes\n\n```markdown\n## run stats\n### Run stats\n```\n' > "$fx/quoted.md"
+          run
+          refute 'heading not parsed' 'fixture 8 (no near-miss warning inside a fence)'
+
+          # 9 - a ### Run stats INSIDE an accepted section is a sub-heading.
+          fresh
+          { printf '# P\n\n## Run stats\n\n### Run stats\n\n'; block 2026-08-02 sub-run-stats; } > "$fx/subrs.md"
+          run
+          refute 'heading not parsed' 'fixture 9 (### inside a section does not warn)'
+          one_run 'fixture 9 (block under it still parses)'
+
+          # 10 - unfilled and malformed are listed by file:line. The complete
+          # file sorts FIRST, so a stale "a fence was seen" flag would turn the
+          # placeholder into a malformed block; and the placeholder ends at EOF,
+          # so it is only attributed to its own file if bfile is captured.
+          fresh
+          { printf '# A\n\n## Run stats\n\n'; block 2026-08-01 complete-run; } > "$fx/a.md"
+          printf '# B\n\n## Run stats\n\n_To be filled in._\n' > "$fx/b.md"
+          printf '# C\n\n## Run stats\n\n```yaml\nTBD\n```\n' > "$fx/c.md"
+          run
+          expect '1 stats section(s) never filled in:' 'fixture 10 (unfilled count)'
+          expect "  $fx/b.md:3" 'fixture 10 (unfilled section named by its own file)'
+          refute "$fx/a.md:" 'fixture 10 (complete file must not be listed)'
+          expect '1 malformed block(s) (fence with no recognised key):' 'fixture 10 (malformed count)'
+          expect "  $fx/c.md:3" 'fixture 10 (malformed block listed by file)'
+
+          # 11 - a corpus of only placeholders still lists them (n == 0 path).
+          fresh
+          printf '# A\n\n## Run stats\n\n_To be filled in._\n' > "$fx/a.md"
+          run
+          expect 'run-stats: no run-stats blocks found.' 'fixture 11 (empty-corpus message)'
+          expect 'never filled in:' 'fixture 11 (placeholders listed when nothing parsed)'
+          expect "  $fx/a.md:3" 'fixture 11 (placeholder named)'
+
+          # 12 - a sub-heading inside the section does not cut the block off.
+          fresh
+          { printf '# P\n\n## Run stats\n\n### Phase 1\n\n'; block 2026-08-02 sub-heading; } > "$fx/sub.md"
+          run
+          one_run 'fixture 12 (block under a ### sub-heading parses)'
+
+          # 13 - an H2 ends the section: a fence under the NEXT heading is not
+          # this section's block.
+          fresh
+          { printf '# P\n\n## Run stats\n\n_todo_\n\n## Notes\n\n'; block 2026-08-02 under-notes; } > "$fx/h2.md"
+          run
+          expect 'never filled in' 'fixture 13 (section ended at the H2)'
+          refute 'malformed block(s) (' 'fixture 13 (later fence is not this block)'
+
+          # 14 - an unclosed stats fence followed by an accepted stats heading:
+          # the heading proves the fence never closed. The retry's BARE fence
+          # would otherwise close the first fence and count its partial block.
+          fresh
+          { head_run; open_block 2026-08-03 first-try
+            printf '\n## Run stats — retry\n\nnotes\n\n'; block 2026-08-04 retry-run | sed '1s/.*/```/'; } > "$fx/open.md"
+          run
+          expect "run-stats: unclosed fence: $fx/open.md:5" 'fixture 14 (stats heading proves the fence never closed)'
+          expect 'retry-run' 'fixture 14 (the retry block is the one counted)'
+          refute 'first-try' 'fixture 14 (partial block not counted)'
+
+          # 15 - same, but the evidence is a fence line carrying an info string
+          # (no heading at all): the bash fence's closer would otherwise close the
+          # stats fence and count the partial block.
+          fresh
+          { head_run; open_block 2026-08-03 never-closed
+            printf '\n```bash\necho hi\n```\n'; } > "$fx/info.md"
+          run
+          expect "run-stats: unclosed fence: $fx/info.md:5" 'fixture 15 (info-string fence proves the fence never closed)'
+          refute 'Ratios over' 'fixture 15 (partial block not counted)'
+          expect "  $fx/info.md:3" 'fixture 15 (listed as malformed)'
+
+          # 16 - a "## note" line inside a closed block is a YAML comment, not
+          # evidence of an unclosed fence.
+          fresh
+          { head_run; block 2026-08-05 yaml-comment | sed '3i## note'; } > "$fx/c2.md"
+          run
+          one_run 'fixture 16 (## comment inside a block parses)'
+          refute 'unclosed fence' 'fixture 16 (## comment is not evidence)'
+
+          # 17 - a "# note" comment in the middle of a block is skipped quietly.
+          fresh
+          { head_run; block 2026-08-05 hash-comment | sed '8i# note'; } > "$fx/c1.md"
+          run
+          one_run 'fixture 17 (# comment inside a block parses)'
+          refute 'unparsable' 'fixture 17 (comment is not an unparsable line)'
+
+          # 18 - a heading quoted inside an ordinary fence is not a heading.
+          fresh
+          { printf '# P\n\n## Approach\n\n```markdown\n## Run stats — phase 2\n```\n\n## Run stats\n\n'
+            block 2026-08-04 real-one; } > "$fx/q.md"
+          run
+          one_run 'fixture 18 (quoted heading ignored, real block parsed)'
+          refute 'never filled in' 'fixture 18 (quoted heading did not open a section)'
+
+          # 19 - a non-yaml fence under the stats heading is ordinary code; the
+          # yaml block after it is the stats block.
+          fresh
+          { printf '# P\n\n## Run stats\n\n```markdown\ndate: 2000-01-01\nslug: quoted-example\n```\n\n'
+            block 2026-08-05 after-markdown; } > "$fx/md.md"
+          run
+          one_run 'fixture 19 (yaml block after a markdown fence parses)'
+          refute 'quoted-example' 'fixture 19 (the quoted markdown is not parsed)'
+          refute 'malformed block(s) (' 'fixture 19 (markdown fence is not a malformed block)'
+
+          # 20 - a closer must be bare: a ```bash line inside a markdown fence
+          # does not close it, so the heading after it is a real heading.
+          fresh
+          { printf '# P\n\n```markdown\n```bash\necho hi\n```\n\n## Run stats\n\n'
+            block 2026-08-05 after-bash-line; } > "$fx/bare.md"
+          run
+          one_run 'fixture 20 (info-string line does not close a fence)'
+          refute 'unclosed fence' 'fixture 20 (no unclosed-fence warning)'
+
+          # 21 - one block per heading: a second yaml fence is warned about and
+          # not parsed.
+          fresh
+          { head_run; block 2026-08-06 first-block
+            printf '\n'; block 2026-08-07 second-block; } > "$fx/two.md"
+          run
+          l2=$(grep -n '^```yaml' "$fx/two.md" | sed -n 2p | cut -d: -f1)
+          expect 'second block under one heading (use "## Run stats — <label>"): '"$fx/two.md:$l2" 'fixture 21 (second block warned)'
+          one_run 'fixture 21 (second block not parsed)'
+
+          # 22 - a keyless placeholder fence does not take the heading's slot: the
+          # real block after it counts, with no second-block warning.
+          fresh
+          { printf '# P\n\n## Run stats\n\n```yaml\nTBD\n```\n\n'; block 2026-08-06 after-placeholder; } > "$fx/ph.md"
+          run
+          one_run 'fixture 22 (real block after a placeholder fence counts)'
+          refute 'second block' 'fixture 22 (placeholder did not use up the slot)'
+
+          # 23 - a longer outer fence can quote a shorter one.
+          fresh
+          { printf '# P\n\n## Approach\n\n````markdown\n```yaml\nnot: a block\n```\n````\n\n## Run stats\n\n'
+            block 2026-08-08 after-nested; } > "$fx/nested.md"
+          run
+          one_run 'fixture 23 (block after a nested fence parses)'
+          refute 'unclosed fence' 'fixture 23 (nested fence closes on its own length)'
+
+          # 24 - an unclosed stats fence is discarded at a file boundary, and
+          # does not take the next file with it.
+          fresh
+          { printf '# A\n\n## Run stats\n\n'; open_block 2026-08-03 never-closed; } > "$fx/a-open.md"
+          { printf '# B\n\n## Run stats\n\n'; block 2026-08-04 after-open; } > "$fx/b-ok.md"
+          run
+          expect "run-stats: unclosed fence: $fx/a-open.md:5" 'fixture 24 (unclosed fence names its opening line)'
+          one_run 'fixture 24 (partial block not counted, later file parses)'
+          expect "  $fx/a-open.md:3" 'fixture 24 (partial block listed as malformed)'
+
+          # 25 - an unclosed ORDINARY fence inside a stats section is a malformed
+          # section, not an unfilled one; the next file is unaffected.
+          fresh
+          printf '# A\n\n## Run stats\n\n```bash\necho never closed\n' > "$fx/a-bash.md"
+          { printf '# B\n\n## Run stats\n\n'; block 2026-08-04 after-bash; } > "$fx/b-ok.md"
+          run
+          expect "run-stats: unclosed fence: $fx/a-bash.md:5" 'fixture 25 (unclosed bash fence warned)'
+          expect "  $fx/a-bash.md:3" 'fixture 25 (listed as malformed)'
+          refute 'never filled in' 'fixture 25 (not reported as unfilled)'
+          one_run 'fixture 25 (later file parses)'
+
+          # 26 - same at EOF of the LAST file (nothing follows to hide behind).
+          fresh
+          { printf '# B\n\n## Run stats\n\n'; block 2026-08-04 fine; } > "$fx/b-ok.md"
+          { printf '# Z\n\n## Run stats\n\n'; open_block 2026-08-09 eof-open; } > "$fx/z-open.md"
+          run
+          expect "run-stats: unclosed fence: $fx/z-open.md:5" 'fixture 26 (EOF unclosed fence warned)'
+          one_run 'fixture 26 (partial block at EOF not counted)'
+
+          # 27 - within one file, a later accepted heading proves the fence was
+          # never closed. The partial block is discarded, the retry parses.
+          fresh
+          { head_run; open_block 2026-08-05 first-try
+            printf '\n## Run stats — retry\n\n'; block 2026-08-06 retry; } > "$fx/u.md"
+          run
+          expect "run-stats: unclosed fence: $fx/u.md:5" 'fixture 27 (unclosed fence names its opening line)'
+          one_run 'fixture 27 (only the retry block counts)'
+
+          # 28 - a new file starts outside any section: a fenced block with no
+          # heading, sorted after a file whose section is still open, is not
+          # collected (a second one would draw the second-block warning).
+          fresh
+          printf '# A\n\n## Run stats\n\nstill open at EOF\n' > "$fx/a.md"
+          { block 2026-08-07 headless-1; printf '\n'; block 2026-08-08 headless-2; } > "$fx/b.md"
+          run
+          refute 'second block' 'fixture 28 (instats does not leak across files)'
+          expect "  $fx/a.md:3" 'fixture 28 (the open section is listed as unfilled)'
+
+          # 29 - CRLF checkout. The CR survives on any Linux awk; Git Bash's
+          # gawk strips it in text-mode I/O, so this only proves anything on the
+          # runner (see the CRLF note in .claude/CLAUDE.md).
+          fresh
+          sed 's/$/\r/' scripts/run-stats.example.md > "$fx/crlf.md"
+          run
+          one_run 'fixture 29 (CRLF input parses)'
+          expect 'Actioned findings + escapes: 14 ' 'fixture 29 (CRLF denominator)'
+
+          # 30 - filenames are attacker-shaped text: ESC and a newline in one
+          # must not reach the terminal through ANY message that names a file.
+          # (Linux only; NTFS refuses such names.)
+          fresh
+          pre=$(printf 'esc\033[31m\nX'); pre=${pre%X} # X keeps the trailing newline
+          printf '# P\n\n## run stats\n' > "$fx/${pre}n.md"                      # near miss
+          printf '# P\n\n## Run stats\n\n_todo_\n' > "$fx/${pre}u.md"             # unfilled
+          printf '# P\n\n## Run stats\n\n```yaml\nTBD\n```\n' > "$fx/${pre}m.md"  # malformed
+          printf '# P\n\n## Run stats\n\n```yaml\ndate: 2026-01-01\n' > "$fx/${pre}z.md" # unclosed
+          run
+          refute_bytes '\033' 'fixture 30 (ESC from a filename)'
+          expect "heading not parsed (expected \"## Run stats\"): $fx/esc?[31m?n.md:3" 'fixture 30 (near-miss warning)'
+          expect "  $fx/esc?[31m?u.md:3" 'fixture 30 (unfilled listing)'
+          expect "  $fx/esc?[31m?m.md:3" 'fixture 30 (malformed listing)'
+          expect "unclosed fence: $fx/esc?[31m?z.md:5" 'fixture 30 (unclosed-fence warning)'
+
+          # 31 - values: UTF-8 C1 (U+009B, the 8-bit CSI), a bidi override
+          # (U+202E), LRM (U+200E) and ALM (U+061C) are neutralised too.
+          fresh
+          { head_run; block 2026-08-07 "$(printf 'a\302\233b')"
+            printf '\n## Run stats — two\n\n'; block 2026-08-08 "$(printf 'c\342\200\256d')"
+            printf '\n## Run stats — three\n\n'; block 2026-08-09 "$(printf 'e\342\200\216f')"
+            printf '\n## Run stats — four\n\n'; block 2026-08-10 "$(printf 'g\330\234h')"; } > "$fx/v.md"
+          run
+          refute_bytes '\302\233' 'fixture 31 (UTF-8 C1 in a value)'
+          refute_bytes '\342\200\256' 'fixture 31 (bidi override in a value)'
+          refute_bytes '\342\200\216' 'fixture 31 (LRM in a value)'
+          refute_bytes '\330\234' 'fixture 31 (ALM in a value)'
+          expect 'a?b ' 'fixture 31 (C1 replaced)'
+          expect 'c?d ' 'fixture 31 (bidi replaced)'
+          expect 'e?f ' 'fixture 31 (LRM replaced)'
+          expect 'g?h ' 'fixture 31 (ALM replaced)'
+
+          # 32 - a relative path shaped like x=y is a path, not an awk variable
+          # assignment. (A directory named fence=1 is fine on NTFS too.)
+          fresh; mkdir -p "$fx/fence=1"
+          { head_run; block 2026-08-09 assignment-shaped; } > "$fx/fence=1/p.md"
+          run fence=1
+          one_run 'fixture 32 (x=y path is read as a file)'
+
+          # 33 - the bash-side message for a missing directory is sanitised by
+          # the same clean() (that path exits 1, hence || true): ESC, a UTF-8 C1
+          # pair and a bidi override all become ?.
+          run "$fx/missing$(printf '\033\302\233\342\200\256')dir" || true
+          refute_bytes '\033' 'fixture 33 (ESC from a directory name)'
+          refute_bytes '\302\233' 'fixture 33 (C1 from a directory name)'
+          refute_bytes '\342\200\256' 'fixture 33 (bidi from a directory name)'
+          expect 'no such directory: ' 'fixture 33 (message printed)'
+          expect 'missing???dir' 'fixture 33 (control bytes became ?)'
+
+          # 34 - 0-3 leading spaces make a heading; 4 or more is a code block, so
+          # it is neither parsed nor warned about.
+          fresh
+          { printf '# P\n\n  ## Run stats\n\n'; block 2026-08-10 indented-heading; } > "$fx/ind2.md"
+          run
+          one_run 'fixture 34 (two-space heading parses)'
+          fresh
+          { printf '# P\n\n    ## Run stats\n\n'; block 2026-08-10 code-block-heading; } > "$fx/ind4.md"
+          run
+          refute 'heading not parsed' 'fixture 34 (four-space line is not warned about)'
+          refute 'Ratios over' 'fixture 34 (four-space line is not a heading)'
+
+          # 35 - inside a four-backtick stats fence, a shorter info-string fence
+          # line is content (CommonMark), not evidence the fence never closed.
+          fresh
+          { printf '# P\n\n## Run stats\n\n'
+            block 2026-08-11 four-ticks | sed '1s/.*/````yaml/; $s/.*/````/; 3i```bash'; } > "$fx/four.md"
+          run
+          one_run 'fixture 35 (shorter info-string line inside a longer fence is content)'
+          refute 'unclosed fence' 'fixture 35 (no unclosed-fence warning)'
+
+          # 36 - when no run has a full set of counters the table prints but the
+          # ratios do not, and the diagnostics still say why (usable == 0 path).
+          # One unknown counter and one non-integer counter, so both causes are
+          # counted separately.
+          fresh
+          { head_run; block 2026-08-12 unknown-counter | sed 's/^escaped: 0$/escaped: unknown/'
+            printf '\n## Run stats — two\n\n'; block 2026-08-13 junk-counter | sed 's/^escaped: 0$/escaped: many/'; } > "$fx/inc.md"
+          run
+          expect 'No run had a complete set of counters' 'fixture 36 (no-usable-run message)'
+          refute 'Ratios over' 'fixture 36 (no ratios computed)'
+          expect '2 run(s) excluded from the ratios (incomplete counters).' 'fixture 36 (excluded count)'
+          expect '1 counter(s) recorded as unknown or missing.' 'fixture 36 (unknown counted)'
+          expect '1 counter(s) were neither an integer nor "unknown"' 'fixture 36 (suspect counted)'
+
+          # 37 - the "skipped:" summary counts malformed blocks and unparsable
+          # lines, on the ratios path and on the n == 0 path. A keyless placeholder
+          # body such as TBD is itself an unparsable line, hence the counts below.
+          fresh
+          { printf '# A\n\n## Run stats\n\n'; block 2026-08-14 has-junk-line | sed '3ijunk without a colon'; } > "$fx/a.md"
+          printf '# C\n\n## Run stats\n\n```yaml\nTBD\n```\n' > "$fx/c.md"
+          run
+          expect 'skipped: 1 malformed block(s), 2 unparsable line(s).' 'fixture 37 (skipped summary with ratios)'
+          one_run 'fixture 37 (the good block still counts)'
+          fresh
+          printf '# C\n\n## Run stats\n\n```yaml\nTBD\n```\n' > "$fx/c.md"
+          run
+          expect 'run-stats: no run-stats blocks found.' 'fixture 37 (n == 0)'
+          expect 'skipped: 1 malformed block(s), 1 unparsable line(s).' 'fixture 37 (skipped summary when nothing parsed)'
+
+          # 38 - a directory literally named "-" is a path, not "the previous
+          # directory" (cd - would print and then fail or resolve elsewhere).
+          fresh; mkdir -p "$fx/-"
+          { head_run; block 2026-08-15 dash-dir; } > "$fx/-/p.md"
+          run - ./-
+          one_run 'fixture 38 (directory named - is a path, and dedupes against ./-)'
+
+          # 39 - the same (date, slug) in two files with different values is not
+          # a duplicate, but it is said out loud (a stale copy or a collision).
+          # Both runs still count.
+          fresh
+          { printf '# A\n\n## Run stats\n\n'; block 2026-08-16 shared-name; } > "$fx/a.md"
+          { printf '# B\n\n## Run stats\n\n'; block 2026-08-16 shared-name | sed 's/^escaped: 0$/escaped: 1/'; } > "$fx/b.md"
+          run
+          expect '1 (date, slug) pair(s) appear in more than one file with different values' 'fixture 39 (cross-file name collision is reported)'
+          expect 'Ratios over 2 complete run(s).' 'fixture 39 (both runs still count)'
+          refute 'duplicate block' 'fixture 39 (not an exact duplicate)'
+
+          # 40 - a directory that cannot be entered is reported, not skipped.
+          # CI-only: NTFS has no chmod 000, and root ignores it, hence the guard.
+          # Not mutation-verified locally for the same reason.
+          if [ "$(id -u)" != 0 ]; then
+            fresh; mkdir -p "$fx/locked"
+            { head_run; block 2026-08-17 locked-dir; } > "$fx/locked/p.md"
+            chmod 000 "$fx/locked"
+            run "$fx/locked" || true
+            chmod 755 "$fx/locked"
+            expect 'run-stats: cannot enter directory:' 'fixture 40 (unreadable directory is reported)'
+          fi
+
+          # 41 - a pair shared by three files is still one pair, said once.
+          fresh
+          for e in 0 1 2; do
+            { head_run; block 2026-08-18 three-way | sed "s/^escaped: 0\$/escaped: $e/"; } > "$fx/f$e.md"
+          done
+          run
+          expect '1 (date, slug) pair(s) appear in more than one file' 'fixture 41 (a pair in three files is counted once)'
+
+          exit "$fail"
 
   ref-check:
     name: ref-check.sh (docs ↔ agents/skills)

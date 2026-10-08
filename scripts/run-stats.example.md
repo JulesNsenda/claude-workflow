@@ -16,6 +16,26 @@ The heading above is the real one — this file is also the CI smoke-test
 fixture, so it is parsed by `run-stats.sh` on every build and any drift between
 this format and the parser fails the build rather than degrading quietly.
 
+**One block per run.** The parser accepts `## Run stats` exactly, or that text
+followed by a non-word character, so a later run on the same plan gets its own
+heading, such as `## Run stats — phase 2`. A heading like `## Run statsheet`
+is not a stats heading. A near miss is a level-2+ heading reading `run stats` with other casing
+or level (such as `### Run stats`), outside an accepted section; it is warned
+about on stderr and not parsed. Other spellings (`Run-stats`, `Runstats`) are
+not detected. A
+heading with no fenced block under it is listed as "never filled in"; a fence
+with no recognised key is listed as malformed. That includes a placeholder
+written *inside* the fence — leave the fence out until there is something to
+put in it. The stats fence is `yaml`, `yml` or bare; any other fence in the
+section (`bash`, `markdown`) is ordinary code and ignored. One block per
+heading: a second one is warned about and not parsed. Only backtick fences are
+recognised (`~~~` is not), and a fence closes only on a bare backtick line at
+least as long as its opener, so a longer outer fence can quote a shorter one.
+A stats fence that is never closed is discarded, not counted. A sub-heading
+inside the section is fine: the section ends at the next H1 or H2. A heading
+may have 0-3 leading spaces; a tab or 4 or more is a code block, so it is
+neither parsed nor warned about.
+
 A fenced block containing **flat `key: value` lines only** — no nesting, no
 lists, no quoting, no anchors. The fence says `yaml` because flat scalars are
 valid YAML, but the parser is not a YAML parser: a nested map's child lines
