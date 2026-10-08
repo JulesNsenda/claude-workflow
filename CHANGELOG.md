@@ -16,6 +16,36 @@ and a clone reads the tag.
 
 ## [Unreleased]
 
+### Added
+
+- **`pending` sentinel for run stats.** An abandoned or in-flight run used to
+  look finished, with structural zeros feeding the ratios. A key holding
+  `pending` ("not reached yet", distinct from `unknown`, "not knowable") now
+  keeps the run out of the ratios and lists it as still pending by `file:line`.
+- **`gates_failed` list key.** Records *which* gates needed a fix loop (`none`,
+  `pending`, `unknown`, or a list such as `2,4`), and the aggregator tallies it
+  per gate, so the stats say where the loops happen rather than only how many.
+- **A *Filled at* column** in `scripts/run-stats.example.md`, naming the
+  checkpoint at which each key is written.
+- **CI check that tracked Markdown is valid UTF-8**, with a broken fixture that
+  asserts its own failure message. A Windows tool once wrote cp1252 dashes into
+  the run-stats format doc, which render as garbage on GitHub; CI stayed green
+  because nothing parses prose.
+
+### Changed
+
+- **`plan-gates` seeds Run stats at plan time and keeps it as a running
+  ledger.** Writing the block only at the end meant an interrupted run left no
+  trace. The block is now seeded when the plan file is written, updated at each
+  checkpoint, and closed observably before the change summary, which now
+  carries one composed Run stats line. `escaped` stays `pending` until close so
+  an abandoned run cannot enter the ratios with a structural zero.
+
+### Deprecated
+
+- **`gates_failed_first_pass` is legacy-only.** Old blocks still parse (shown
+  as `n=2` in the GATES column); new blocks write `gates_failed` instead.
+
 ## [1.3.1] - 2026-10-08
 
 Patch: fixes to the run-stats aggregator, which is not part of the installed
