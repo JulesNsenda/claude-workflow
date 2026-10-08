@@ -795,6 +795,44 @@ jobs:
           refute 'malformed' 'fixture 54 (no complaint)'
           refute 'neither an integer' 'fixture 54 (no suspect counter)'
 
+          # 55 - the close check plan-gates step 11 tells the orchestrator to run:
+          # copy the plan into an empty directory, run the parser, and require the
+          # ratio line, nothing after the "dropped" line, and an empty stderr. A
+          # mistyped key (escapd) emits only a count diagnostic that names no
+          # file, so a check keyed on the file name would pass it.
+          close_ok() { # $1 = plan file; returns 0 only if the close criteria hold
+            cd_dir="$RUNNER_TEMP/close-check"; rm -rf "$cd_dir"; mkdir -p "$cd_dir"
+            cp "$1" "$cd_dir/"
+            cout=$(bash "$rs" "$cd_dir" 2>"$RUNNER_TEMP/close-check.err")
+            [ -z "$(cat "$RUNNER_TEMP/close-check.err")" ] || return 1
+            printf '%s\n' "$cout" | grep -qF 'Ratios over 1 complete run(s).' || return 1
+            clast=$(printf '%s\n' "$cout" | grep -v '^$' | tail -1)
+            case $clast in *'dropped without individual reasons'*) return 0 ;; *) return 1 ;; esac
+          }
+          fresh
+          { head_run; closed_block; } > "$fx/good.md"
+          { head_run; closed_block | sed 's/^escaped:/escapd:/'; } > "$fx/typo.md"
+          if close_ok "$fx/good.md"; then echo "  ok - fixture 55 (a clean closed block passes the close check)"
+          else red "fixture 55: a clean closed block failed the close check"; fi
+          if close_ok "$fx/typo.md"; then red "fixture 55: a mistyped key passed the close check"
+          else echo "  ok - fixture 55 (a mistyped key fails the close check)"; fi
+          # A malformed gates_failed still yields the ratio line (it is a
+          # dimension, not a counter); only the trailing listing catches it.
+          { head_run; closed_block | sed 's/^gates_failed: .*/gates_failed: 2;x/'; } > "$fx/gate.md"
+          if close_ok "$fx/gate.md"; then red "fixture 55: a malformed gates_failed passed the close check"
+          else echo "  ok - fixture 55 (a malformed gates_failed fails the close check)"; fi
+          # Two criteria that no output line can catch for these inputs: a plan
+          # holding two complete runs prints "Ratios over 2" and still ends on the
+          # dropped line (only the ratio-line criterion fails it); a near-miss
+          # heading after a good block warns on stderr only (only the empty-stderr
+          # criterion fails it).
+          { head_run; closed_block; printf '\n## Run stats — again\n\n'; closed_block | sed 's/^slug: lifecycle$/slug: second/'; } > "$fx/two.md"
+          if close_ok "$fx/two.md"; then red "fixture 55: two runs passed the one-run close check"
+          else echo "  ok - fixture 55 (a second run fails the close check)"; fi
+          { head_run; closed_block; printf '\n## run stats\n'; } > "$fx/warn.md"
+          if close_ok "$fx/warn.md"; then red "fixture 55: a stderr warning passed the close check"
+          else echo "  ok - fixture 55 (a stderr warning fails the close check)"; fi
+
           exit "$fail"
 
   ref-check:

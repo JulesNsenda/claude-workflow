@@ -79,9 +79,10 @@ reasoning transcripts**.
    and the fix-loop iterations stay countable apart. Finally **Summary**,
    written at the end of Phase 2, and **Run stats**, seeded now as a running
    ledger: each later checkpoint updates the keys whose *Filled at* names it,
-   never end-of-run recall. The format and seed rules are in the clone's
-   `scripts/run-stats.example.md` (`scripts/` is not symlinked into
-   `~/.claude`). Those sections, sized to the task — cover the substance,
+   never end-of-run recall. The format and seed rules live in the
+   **claude-workflow** clone, not the current project (`scripts/` is not
+   symlinked into `~/.claude`): read `scripts/run-stats.example.md` there
+   rather than reconstructing the keys from memory. Those sections, sized to the task — cover the substance,
    nothing beyond it, no filler or restatement. That is a
    brevity rule for prose, **not** for the per-finding rejection reasons step 4
    requires: never drop one of those to save space.
@@ -92,9 +93,10 @@ reasoning transcripts**.
 
 Models switch automatically per phase: the main session stays frontier
 (orchestrator/verifier); implementation and testing run on spawned agents.
-Resuming in a new session? Read the plan's Run stats block first; a value an
-earlier session didn't write and you can't reconstruct becomes `unknown`,
-never `0`.
+Resuming in a new session? Read the plan's Run stats block first. Keys still
+`pending` stay `pending`; only a key whose checkpoint has already passed
+without being written becomes `unknown`, never `0`, and a running total that
+has become `unknown` stays `unknown`.
 
 1. **Optionally drive with `/goal`** (built-in, v2.1.139+; the user types it —
    hand them the line to paste). Its evaluator is a fast model that doesn't
@@ -171,19 +173,20 @@ never `0`.
    and if a Gate 3/4 failure is a defect both critic passes missed, note it in
    the plan.
 10. **Commit per plan-item** as it clears all five gates — tick its checkbox in
-   the same commit, and update the ledger. Don't batch the whole plan into one commit; per-item commits
-   bound derailment and make reverts cheap.
+   the same commit, and update the ledger. Don't batch the whole plan into one
+   commit; per-item commits bound derailment and make reverts cheap.
 11. **Write the change summary** after the last plan-item commit. First close
-   the ledger, resolving every `pending` to a real value or `unknown`. Run the
-   clone's `scripts/run-stats.sh` on the plan directory: the close is done only
-   when this plan's block appears as a row in its table, is not listed under
-   "still pending", and no diagnostic or stderr warning names this plan's file.
-   Then bring the plan file up to date if scope legitimately
-   changed, so the summary is written from the final record. Then add it to the
-   plan file as `## Summary`. Its reader is someone who was not in the session
-   and has not read the plan — a reviewer, a teammate picking the work up, you
-   in three months. The plan file usually stays local, so the same text is also what
-   goes out: reuse it as the PR description, or as the closing message when
+   the ledger, resolving every `pending` to a real value or `unknown`. Then
+   check it as CI checks the canonical example: copy the plan file into an
+   empty temp directory and run the claude-workflow clone's
+   `scripts/run-stats.sh` on that directory. The close is done only when the
+   output says `Ratios over 1 complete run(s).`, nothing follows the
+   `dropped without individual reasons` line, and stderr is empty. Then bring
+   the plan file up to date if scope legitimately changed, so the summary is written
+   from the final record. Then add it to the plan file as `## Summary`. Its
+   reader is someone who was not in the session and has not read the plan — a
+   reviewer, a teammate picking the work up, you in three months. The plan file
+   usually stays local, so the same text is also what goes out: reuse it as the PR description, or as the closing message when
    there is no PR, so the two can't drift. Keep it short and in plain
    language:
    - **What changed and why** — one line per plan-item, named by its commit
