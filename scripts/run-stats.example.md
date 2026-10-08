@@ -64,19 +64,34 @@ escalated_from: none
 
 ## The keys
 
-| Key | Meaning |
-|---|---|
-| `date`, `slug` | Match the plan filename. |
-| `gear` | `full` - only full-gear runs write this block. |
-| `effort_plan`, `effort_diff` | Effort the critics ran at in each pass. |
-| `findings_*_actioned` | Findings that changed the work. |
-| `findings_*_rejected` | Findings consciously rejected **with a written reason**. Not a failure — this is the critic-noise signal. |
-| `findings_*_dropped` | `medium`/`low` findings dropped without individual reasons. Counted so the rejection rate can't read as a whole-panel number when it only saw the severe tail. |
-| `escaped` | Defects **both critic passes missed**, caught at Gate 3, Gate 4, or by you afterwards. The most important number here. |
-| `agents_spawned` | Total across both phases, including fix-loop re-runs. |
-| `gates_failed` | Which of gates 1–5 needed a fix loop: `none`, `pending`, `unknown`, or a list such as `2,4`. Spaces around commas are ignored, brackets are dropped, order is normalised and duplicates collapsed, so `[4, 2]` reads as `2,4`. Each gate is listed once however many loops it took. Gate 5's re-verification counts as Gate 5, not as a second failure of gates 3–4. It is a dimension, not a ratio counter: apart from `pending`, it never excludes a run from the ratios. A value that is none of those is reported on its own line. |
-| `gates_failed_first_pass` | **Legacy only.** The older count of gates that needed a fix loop. Old blocks keep parsing and show as `n=2` in the GATES column; new blocks don't write it. |
-| `escalated_from` | The gear the task *started* at if it moved up (`skip`, `light`); `none` if it started where it finished. |
+| Key | Meaning | Filled at |
+|---|---|---|
+| `date`, `slug` | Match the plan filename. | plan written |
+| `gear` | `full` - only full-gear runs write this block. | plan written |
+| `effort_plan` | Effort the critics ran at in the plan pass. | plan written |
+| `effort_diff` | Effort the critics ran at in the diff pass. `mixed` if a later pass ran at a different effort. | first Gate 2 triage |
+| `findings_plan_actioned` | Findings that changed the work. | plan written |
+| `findings_diff_actioned` | Findings that changed the work. Running totals across passes, counting each distinct finding once: one raised again in a later pass is not re-added. | each Gate 2 triage |
+| `findings_plan_rejected` | Findings consciously rejected **with a written reason**. Not a failure — this is the critic-noise signal. | plan written |
+| `findings_diff_rejected` | As `findings_plan_rejected`, for the diff pass. Running totals, as for `findings_diff_actioned`. | each Gate 2 triage |
+| `findings_plan_dropped` | `medium`/`low` findings dropped without individual reasons. Counted so the rejection rate can't read as a whole-panel number when it only saw the severe tail. | plan written |
+| `findings_diff_dropped` | As `findings_plan_dropped`, for the diff pass. Running totals, as for `findings_diff_actioned`. | each Gate 2 triage |
+| `escaped` | Defects **both critic passes missed**, caught at Gate 3, Gate 4, or by you afterwards. The most important number here. | close |
+| `agents_spawned` | Total across both phases, including fix-loop re-runs. Seeded with the Phase 1 count, then a running total. | plan written, then each plan-item commit |
+| `gates_failed` | Which of gates 1–5 needed a fix loop: `none`, `pending`, `unknown`, or a list such as `2,4`. It is a list of gate numbers, not a count — `2` means gate 2 looped. Spaces around commas are ignored, brackets are dropped, order is normalised and duplicates collapsed, so `[4, 2]` reads as `2,4`. Each gate is listed once however many loops it took. Gate 5's re-verification counts as Gate 5, not as a second failure of gates 3–4. It is a dimension, not a ratio counter: apart from `pending`, it never excludes a run from the ratios. A value that is none of those is reported on its own line. Seeded `none`; on the first fix loop *replace* `none` with that gate, on later loops append (`none,2` is not a valid value). | each fix loop |
+| `gates_failed_first_pass` | **Legacy only.** The older count of gates that needed a fix loop. Old blocks keep parsing and show as `n=2` in the GATES column; new blocks don't write it. | never — omit |
+| `escalated_from` | The gear the task *started* at if it moved up (`skip`, `light`); `none` if it started where it finished. | plan written |
+
+**Seeding.** Write the block when the plan is written, with every key present
+except the legacy one: keys whose *Filled at* starts with "plan written" get
+their values, `gates_failed` starts at `none`, and every other key is `pending`.
+Derive the seed from this table, not by copying the illustrative block above —
+that one is a closed example CI parses.
+
+`escaped` stays `pending` until close, so an abandoned run can never enter the
+ratios with a structural zero. When Gate 3 or Gate 4 catches a defect both
+critic passes missed, note it in the plan (diff-stage critiques); at close,
+`escaped` is the count of those notes.
 
 ## Sentinels
 

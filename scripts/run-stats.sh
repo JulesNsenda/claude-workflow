@@ -19,8 +19,8 @@
 #
 # Output besides the table and ratios:
 #   stdout  "never filled in" (a heading with no fence), "malformed" (a fence
-#           with no recognised key), "still pending" (a run with a pending
-#           counter), a gates_failed value that is not a list of gates,
+#           with no recognised key), "still pending" (a run with `pending` in
+#           any key), a gates_failed value that is not a list of gates,
 #           duplicate blocks (identical values), and (date, slug) pairs shared
 #           across files with different values.
 #   stderr  a near-miss heading that was not parsed; an unclosed fence (its

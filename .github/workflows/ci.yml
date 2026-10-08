@@ -45,6 +45,57 @@ jobs:
           fi
           printf '%s\n' "$BLOCKLIST" > "$RUNNER_TEMP/blocklist.txt"
           bash scripts/leak-check.sh "$RUNNER_TEMP/blocklist.txt"
+      - name: Every tracked Markdown file must be valid UTF-8
+        run: |
+          # A Windows tool once wrote cp1252 dashes (0x96/0x97) into the run-stats
+          # format doc on a branch of this repo, and CI stayed green because
+          # nothing parses that prose. The check is a function so the fixtures
+          # below exercise the same code the real tree does.
+          bad_utf8() { # stdin = NUL-delimited paths; one ::error:: line per bad file
+            n=0; rc=0
+            while IFS= read -r -d '' f; do
+              n=$((n + 1))
+              iconv -f UTF-8 -t UTF-8 "$f" >/dev/null 2>&1 \
+                || { echo "::error::$f is not valid UTF-8"; rc=1; }
+            done
+            # An empty list would read as a clean pass; a checker that matches
+            # nothing is worse than none.
+            [ "$n" -gt 0 ] || { echo "::error::no Markdown files to check"; rc=1; }
+            return "$rc"
+          }
+          # NUL-delimited, with quotePath off, so a valid non-ASCII filename is
+          # neither split nor reported as a path git quoted.
+          git -c core.quotePath=off ls-files -z '*.md' | bad_utf8 \
+            || { echo "::error::tracked Markdown failed the UTF-8 check (see above)"; exit 1; }
+          echo "  ok — all tracked Markdown is valid UTF-8"
+
+          # Fixture 1: a 0x97 byte (cp1252 em dash). Assert the message names
+          # the file, not just a non-zero exit.
+          fx="$RUNNER_TEMP/utf8-fixture.md"
+          printf 'a \227 b\n' > "$fx"
+          if out=$(printf '%s\0' "$fx" | bad_utf8 2>&1); then
+            echo "::error::cp1252 fixture: checker reported clean but should have failed"; exit 1
+          fi
+          printf '%s\n' "$out" | grep -qF "::error::$fx is not valid UTF-8" || {
+            echo "::error::cp1252 fixture: expected message not found"; printf '%s\n' "$out"; exit 1
+          }
+          echo "  ok — cp1252 byte rejected, file named"
+
+          # Fixture 2: a valid file with a non-ASCII name must pass cleanly.
+          nx="$RUNNER_TEMP/$(printf 'utf8-na\303\257ve.md')"
+          printf 'caf\303\251 \342\200\224 ok\n' > "$nx"
+          out=$(printf '%s\0' "$nx" | bad_utf8 2>&1) \
+            || { echo "::error::non-ASCII filename fixture: valid file rejected"; printf '%s\n' "$out"; exit 1; }
+          echo "  ok — valid non-ASCII filename passes"
+
+          # Fixture 3: the empty-list guard, exercised against an empty list.
+          if out=$(printf '' | bad_utf8 2>&1); then
+            echo "::error::empty-list fixture: checker reported clean but should have failed"; exit 1
+          fi
+          printf '%s\n' "$out" | grep -qF '::error::no Markdown files to check' || {
+            echo "::error::empty-list fixture: expected message not found"; printf '%s\n' "$out"; exit 1
+          }
+          echo "  ok — empty file list rejected"
 
   shellcheck:
     name: shellcheck
@@ -571,10 +622,11 @@ jobs:
           run
           expect '1 (date, slug) pair(s) appear in more than one file' 'fixture 41 (a pair in three files is counted once)'
 
-          # 42 - a block seeded exactly as a plan seeds it: plan counters known,
-          # everything else pending. It is listed as still pending, by file:line,
-          # and kept out of the ratios; pending is not "unknown" and not suspect.
-          # The complete run beside it proves the denominator is untouched.
+          # 42 - a block with plan counters known and everything else pending,
+          # including gates_failed (the literal seed is fixture 53). It is
+          # listed as still pending, by file:line, and kept out of the ratios;
+          # pending is not "unknown" and not suspect. The complete run beside
+          # it proves the denominator is untouched.
           fresh
           { printf '# P\n\n## Run stats\n\n```yaml\ndate: 2026-09-01\nslug: seeded\ngear: full\neffort_plan: high\n'
             printf 'effort_diff: pending\nfindings_plan_actioned: 3\nfindings_plan_rejected: 1\nfindings_plan_dropped: 0\n'
@@ -705,6 +757,43 @@ jobs:
           expect ' 0         none ' 'fixture 52 (gate 0 shown as written)'
           expect ' 2;x       none ' 'fixture 52 (malformed value shown as written)'
           refute 'runs with a fix loop' 'fixture 52 (malformed rows are not tallied, so no tally line)'
+
+          # 53, 54 - the lifecycle, literally: a block seeded from the Filled at
+          # table (plan counters known, effort_diff / findings_diff_* / escaped
+          # pending, gates_failed none, agents_spawned an integer) is listed as
+          # still pending by file:line; the same block closed (every pending
+          # resolved, gates_failed 2,4) is a clean complete run with the tally,
+          # and nothing is listed as pending or complained about.
+          seed_block() {
+            printf '```yaml\ndate: 2026-09-20\nslug: lifecycle\ngear: full\neffort_plan: high\n'
+            printf 'effort_diff: pending\nfindings_plan_actioned: 3\nfindings_plan_rejected: 1\nfindings_plan_dropped: 0\n'
+            printf 'findings_diff_actioned: pending\nfindings_diff_rejected: pending\nfindings_diff_dropped: pending\n'
+            printf 'escaped: pending\nagents_spawned: 5\ngates_failed: none\nescalated_from: none\n```\n'
+          }
+          # The same block with every pending resolved and gates_failed 2,4.
+          closed_block() {
+            printf '```yaml\ndate: 2026-09-20\nslug: lifecycle\ngear: full\neffort_plan: high\n'
+            printf 'effort_diff: high\nfindings_plan_actioned: 3\nfindings_plan_rejected: 1\nfindings_plan_dropped: 0\n'
+            printf 'findings_diff_actioned: 2\nfindings_diff_rejected: 1\nfindings_diff_dropped: 0\n'
+            printf 'escaped: 0\nagents_spawned: 9\ngates_failed: 2,4\nescalated_from: none\n```\n'
+          }
+          fresh
+          { head_run; seed_block; } > "$fx/p.md"
+          run
+          expect '1 run(s) still pending (unfinished or abandoned):' 'fixture 53 (seeded block is pending)'
+          expect "  $fx/p.md:3" 'fixture 53 (seeded block named by file:line)'
+          refute 'Ratios over' 'fixture 53 (seeded block is out of the ratios)'
+          refute 'gates_failed value' 'fixture 53 (gates_failed none is not malformed)'
+          refute 'recorded as unknown or missing' 'fixture 53 (pending is not folded into unknown)'
+          fresh
+          { head_run; closed_block; } > "$fx/p.md"
+          run
+          one_run 'fixture 54 (closed block is a complete run)'
+          expect 'runs with a fix loop, by gate (1 runs with gates_failed): G1 0 · G2 1 · G3 0 · G4 1 · G5 0' 'fixture 54 (closed block is tallied)'
+          refute 'still pending' 'fixture 54 (nothing left pending)'
+          refute 'gates_failed value' 'fixture 54 (the list parses)'
+          refute 'malformed' 'fixture 54 (no complaint)'
+          refute 'neither an integer' 'fixture 54 (no suspect counter)'
 
           exit "$fail"
 
