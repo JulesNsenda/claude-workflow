@@ -16,6 +16,48 @@ and a clone reads the tag.
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-10-08
+
+Patch: fixes to the run-stats aggregator, which is not part of the installed
+surface. No agent, skill, rule or installer change. ([#15])
+
+### Fixed
+
+- **Unfinished runs were hidden.** A `## Run stats` heading followed by prose
+  instead of a fenced block was folded into an anonymous "malformed" count, so
+  runs that never reported were invisible. Such sections are now listed by
+  `file:line` as "never filled in". A fence with no recognised key is listed
+  separately as malformed.
+- **Suffixed headings were dropped silently.** `## Run stats — <label>` (one
+  block per run, so a later run on the same plan gets its own heading) is now
+  parsed. Near-miss headings (another level or casing) get a warning on stderr.
+- **An unclosed fence could swallow the rest of a file** and feed partial
+  counters into the ratios. Fences now follow CommonMark: the length is
+  tracked, and a block only closes on a bare closer. Only a `yaml` or bare
+  fence under the heading counts as the stats block. An unclosed block is
+  discarded and reported at its opening line.
+- **The same directory passed twice** (for example `plans` and `plans/`)
+  double-counted every run. Directories are now deduped on their canonical
+  path. A path shaped like `name=value` is no longer read as an awk variable
+  assignment.
+- **Control-byte sanitising now covers filenames as well as values**, plus
+  UTF-8 C1 and bidi controls. One sanitiser is shared by every printed line.
+
+### Changed
+
+- **Duplicate reporting:**
+  - A duplicate is now a block with identical values, in any file. The message
+    now reads `duplicate block(s) (identical values)`.
+  - A (date, slug) pair that appears in more than one file with different values
+    gets its own warning, since it is either a stale copy or a name collision.
+  - Several blocks in one file are no longer reported as duplicates.
+- **The CI smoke test:**
+  - It now carries one fixture per parser failure path, each asserting its own
+    message.
+  - The canonical-format check fails if the example produces any warning or
+    diagnostic line, whatever its wording.
+  - It records which awk the runner used.
+
 ## [1.3.0] - 2026-09-30
 
 Minor: two new scripts (the settings drift check) that both installers now
@@ -215,7 +257,8 @@ earlier release to upgrade from.
 
 Landed as pull requests [#1], [#2], [#3], and [#4].
 
-[Unreleased]: https://github.com/JulesNsenda/claude-workflow/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/JulesNsenda/claude-workflow/compare/v1.3.1...HEAD
+[1.3.1]: https://github.com/JulesNsenda/claude-workflow/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/JulesNsenda/claude-workflow/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/JulesNsenda/claude-workflow/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/JulesNsenda/claude-workflow/compare/v1.0.0...v1.1.0
@@ -230,3 +273,4 @@ Landed as pull requests [#1], [#2], [#3], and [#4].
 [#9]: https://github.com/JulesNsenda/claude-workflow/issues/9
 [#11]: https://github.com/JulesNsenda/claude-workflow/pull/11
 [#13]: https://github.com/JulesNsenda/claude-workflow/pull/13
+[#15]: https://github.com/JulesNsenda/claude-workflow/pull/15
