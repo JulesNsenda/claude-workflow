@@ -2,19 +2,28 @@
 #
 # run-stats.sh — aggregate the "## Run stats" blocks out of plan files.
 #
-# Reads every *.md in one or more plans directories, pulls the fenced block that
-# follows a "## Run stats" heading, and prints one row per run plus the headline
-# ratios.
-#
-# scripts/run-stats.example.md is the single source of truth for the key list.
-# Change the keys there first, then here and in skills/plan-gates/SKILL.md.
+# Reads every *.md in one or more plans directories, pulls the fenced block under
+# each "## Run stats" heading, and prints one row per run plus the headline
+# ratios. scripts/run-stats.example.md is the single source of truth for the
+# format: the key list, and the heading and fence rules. Change the keys there
+# first, then here and in skills/plan-gates/SKILL.md.
 #
 # Parsing discipline: the input is hand-edited Markdown, so values are treated
 # as opaque strings and never executed — no eval, no source, no command
 # substitution on parsed content. Keys outside the allowlist are ignored rather
-# than assigned, control bytes are stripped before printing, and a block that
-# yields no recognised key is counted as malformed and skipped rather than
-# killing the run.
+# than assigned, control bytes (C0, DEL, UTF-8 C1) are replaced with ? in every
+# printed value and filename, and a block that yields no recognised key is
+# skipped rather than killing the run. Skipped sections are listed by file:line,
+# not just counted: silent survivorship bias was the thing this was written to
+# stop.
+#
+# Output besides the table and ratios:
+#   stdout  "never filled in" (a heading with no fence), "malformed" (a fence
+#           with no recognised key), duplicate blocks (identical values), and
+#           (date, slug) pairs shared across files with different values.
+#   stderr  a near-miss heading that was not parsed; an unclosed fence (its
+#           partial block is discarded, never counted); a second block under
+#           one heading (not parsed).
 #
 # A run is excluded from the ratios entirely unless all seven counter values
 # parse as integers — "unknown" removes the run from both numerator and
@@ -24,8 +33,8 @@
 #   scripts/run-stats.sh [plans-dir ...]      # default: docs/plans
 #   scripts/run-stats.sh ~/code/*/docs/plans  # aggregate across projects
 #
-# Tested against gawk only. CI exercises one awk implementation; mawk and busybox
-# awk are untried, so treat portability as unverified rather than assumed.
+# CI logs which awk ran. Only that implementation is exercised, so mawk and
+# busybox awk portability is unverified rather than assumed.
 #
 # Plan files live wherever the project keeps them; this repo gitignores docs/,
 # but that is a property of this repo, not of the workflow.
@@ -36,38 +45,138 @@ if [[ $# -eq 0 ]]; then
   set -- docs/plans
 fi
 
+# One sanitiser for everything printed, defined once and used both by the main
+# awk program and by safe() below. C0, DEL, UTF-8-encoded C1 (which a terminal can
+# act on) and the bidi controls (LRM/RLM/ALM, U+202A-202E, U+2066-2069, which can
+# reorder what a reader sees) all become "?". Filenames go through it too - they
+# are attacker-shaped text just like values. The C1 claim is scoped to
+# UTF-8-encoded C1: a lone 8-bit C1 byte is out of scope, because 0x80-0x9F are
+# also UTF-8 continuation bytes and stripping them would mangle valid text.
+clean_awk='function clean(s) {
+  gsub(/[\001-\037\177]/, "?", s)
+  gsub(/\302[\200-\237]/, "?", s)
+  gsub(/\342\200[\216\217\252-\256]/, "?", s)
+  gsub(/\342\201[\246-\251]/, "?", s)
+  gsub(/\330\234/, "?", s)
+  return s
+}'
+
+# Directory names are user input and end up in messages. Passed via the
+# environment, not -v, because -v would interpret backslash escapes.
+safe() { S=$1 LC_ALL=C awk "$clean_awk
+BEGIN { printf \"%s\", clean(ENVIRON[\"S\"]) }"; }
+
 files=()
+seen_dirs=()
 for dir in "$@"; do
   if [[ ! -d "$dir" ]]; then
-    echo "run-stats: no such directory: $dir" >&2
+    echo "run-stats: no such directory: $(safe "$dir")" >&2
     exit 1
   fi
+  # Dedupe directories (by canonical path), so the same directory given twice,
+  # or spelled two ways, is not counted twice. A seen-list, not an associative
+  # array: macOS bash is 3.2. Files keep the spelling the user typed, so
+  # listings print what they wrote.
+  # CDPATH= so cd cannot print or resolve elsewhere; a directory named - is
+  # read as a path, not "previous directory"; the trailing . survives $(...)
+  # stripping a name that ends in a newline.
+  cdir=$dir; [[ $cdir == - ]] && cdir=./-
+  canon=$(CDPATH='' cd -P -- "$cdir" 2>/dev/null && pwd -P && printf .) || { echo "run-stats: cannot enter directory: $(safe "$dir")" >&2; exit 1; }
+  canon=${canon%.}
+  for d in ${seen_dirs[@]+"${seen_dirs[@]}"}; do
+    [[ $d == "$canon" ]] && continue 2
+  done
+  seen_dirs+=("$canon")
   shopt -s nullglob
   for f in "$dir"/*.md; do
-    [[ -f "$f" && -r "$f" ]] && files+=("$f")
+    [[ -f "$f" && -r "$f" ]] || continue
+    # A path shaped like x=y would be taken by awk as a variable assignment,
+    # not a file. Only those get "./": prefixing everything breaks C:/ paths
+    # under Git Bash, where awk cannot open ./C:/....
+    if [[ $f =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then f="./$f"; fi
+    files+=("$f")
   done
   shopt -u nullglob
 done
 
 if [[ ${#files[@]} -eq 0 ]]; then
-  echo "run-stats: no plan files in $* — nothing to aggregate."
+  echo "run-stats: no plan files in $(safe "$*") — nothing to aggregate."
   exit 0
 fi
 
-awk -v nfiles="${#files[@]}" '
+# The awk program lives in a variable, not inline, so that clean_awk can be
+# prepended to it here and reused by safe() above: one sanitiser, two callers.
+IFS= read -r -d '' prog <<'AWK' || true
 function reset() { split("", cur); nkeys = 0 }
 
-function finish(   i, k, v, complete) {
+# Heading level of the current line: the number of leading #s after 0-3 spaces,
+# 0 if none. Sets htext to what follows them. No space is required after the #s,
+# so "##Run stats" is a level-2 heading, as it always was. A run of #s is one
+# level however long, so "###" is level 3, never level 1 or 2 (also, "#1 note"
+# is level 1: a known quirk, left as it was).
+function hlevel(   h) {
+  htext = ""
+  if (!match($0, /^ ? ? ?#+/)) return 0
+  h = substr($0, 1, RLENGTH); htext = substr($0, RLENGTH + 1)
+  gsub(/ /, "", h)
+  return length(h)
+}
+
+# Line-by-line states (fence / instats / collecting / blockdone):
+#   outside              0 / 0 / 0 / -   nothing of interest
+#   section              0 / 1 / 0 / 0   after an accepted heading, no block yet
+#   section-after-block  0 / 1 / 0 / 1   the block closed; another is warned about
+#   stats-fence          1 / 1 / 1 / -   collecting key: value lines
+#   other-fence          1 / any / 0 / - ordinary code; everything inside is text
+# Only a stats fence ends in a row. Everything else is classified, not dropped.
+
+# An unclosed fence swallowed whatever followed it. The closing fence is the only
+# evidence a block is complete, so its partial block is thrown away (nkeys = 0)
+# and the section is listed as malformed - including when the unclosed fence was
+# ordinary code inside a stats section. One function for every evidence path: a
+# stats heading or an info-string fence inside the stats fence, a file boundary,
+# EOF. finish() is idempotent through started, so calling it here is safe.
+function abandon() {
+  print "run-stats: unclosed fence: " clean(ffile) ":" fline > "/dev/stderr"
+  nkeys = 0; fence = 0; collecting = 0; hadstatsfence = 1
+  finish(); instats = 0
+}
+
+# End of a file (and of the input): whatever is still open is settled here.
+function flush_file() {
+  if (fence) abandon()
+  finish()
+}
+
+# Reports come from bfile/bline, captured at the heading. An EOF section is
+# finished while the first line of the next file is current, so FILENAME would
+# name the wrong file.
+function finish(   i, k, v, vk, complete) {
   if (!started) { reset(); return }
   started = 0
-  if (nkeys == 0) { malformed++; reset(); return }
+  if (nkeys == 0) {
+    if (hadstatsfence) { malformed++; mlist[malformed] = clean(bfile) ":" bline }
+    else          { unfilled++;  ulist[unfilled]  = clean(bfile) ":" bline }
+    reset(); return
+  }
 
   n++
   for (i = 1; i <= na; i++) row[n, ak[i]] = (ak[i] in cur) ? cur[ak[i]] : "?"
 
+  # One rule: a block whose every allowlisted value matches an earlier one is a
+  # duplicate, in the same file (a paste) or another (a copied plan). Sharing only
+  # a date and slug is not: unrelated plans can share a name across projects.
+  vk = ""
+  for (i = 1; i <= na; i++) vk = vk SUBSEP row[n, ak[i]]
+  # Otherwise, worth saying: the same (date, slug) in more than one file with
+  # different values is a stale copy or a name collision. Cross-file only (in one
+  # file it is a legitimate run per heading), counted once per pair: pairfile
+  # holds the first file, and "" once the pair has warned.
   k = row[n, "date"] SUBSEP row[n, "slug"]
-  if (k in seen) dupes++
-  seen[k] = 1
+  if (vk in seenv) dupes++
+  else if (!(k in pairfile)) pairfile[k] = bfile
+  else if (pairfile[k] != "" && pairfile[k] != bfile) { pairs++; pairfile[k] = "" }
+  seenv[vk] = 1
 
   complete = 1
   for (i = 1; i <= nn; i++) {
@@ -89,12 +198,23 @@ function finish(   i, k, v, complete) {
 
 function pct(a, b) { return (b > 0) ? sprintf("%5.1f%%", 100 * a / b) : "    n/a" }
 
+# title is the text after the count; each entry prints as an indented file:line.
+function listing(title, arr, count,   i) {
+  if (!count) return
+  printf "\n%d %s\n", count, title
+  for (i = 1; i <= count; i++) printf "  %s\n", arr[i]
+}
+
 function diagnostics() {
   if (incomplete) printf "\n%d run(s) excluded from the ratios (incomplete counters).\n", incomplete
   if (unkvals)    printf "%d counter(s) recorded as unknown or missing.\n", unkvals
   if (suspect)    printf "%d counter(s) were neither an integer nor \"unknown\" and could not be used.\n", suspect
+  # The CI drift regex matches this line by its "skipped:" prefix; keep it as is.
   if (malformed || badlines) printf "skipped: %d malformed block(s), %d unparsable line(s).\n", malformed + 0, badlines + 0
-  if (dupes)      printf "%d duplicate (date, slug) row(s) — check for copied plan files.\n", dupes
+  if (dupes)      printf "%d duplicate block(s) (identical values) — check for copied plan files.\n", dupes
+  if (pairs)      printf "%d (date, slug) pair(s) appear in more than one file with different values — a stale copy or a name collision.\n", pairs
+  listing("stats section(s) never filled in:", ulist, unfilled)
+  listing("malformed block(s) (fence with no recognised key):", mlist, malformed)
 }
 
 function cell(i, stage) {
@@ -114,22 +234,68 @@ BEGIN {
 
 { sub(/\r$/, "") }
 
-FNR == 1 { finish(); instats = 0; fence = 0; collecting = 0 }
+{ hl = hlevel() }
+
+FNR == 1 { flush_file(); instats = 0 }
 
 /^[ \t]*```/ {
+  match($0, /```+/); run = RLENGTH
+  rest = substr($0, RSTART + RLENGTH); gsub(/^[ \t]+|[ \t]+$/, "", rest)
+  # An info-string fence at least as long as the opener, seen while collecting,
+  # means the stats fence never closed. Fall-through, deliberately: after
+  # abandon() fence is 0, so this same line is handled below as a fresh opener
+  # (an ordinary fence, since the section is over). Shorter, or inside any other
+  # fence, an info-string line is just content.
+  if (fence && collecting && rest != "" && run >= flen) abandon()
   if (fence) {
-    fence = 0
-    if (collecting) { collecting = 0; finish(); instats = 0 }
-  } else {
-    fence = 1
-    if (instats) collecting = 1
+    # Closes only on a bare backtick line at least as long as the opener; any
+    # other backtick line inside a fence is content.
+    if (rest == "" && run >= flen) {
+      fence = 0
+      if (collecting) {
+        collecting = 0
+        # A keyless fence (a placeholder) must not take the heading's slot: leave
+        # started set, so a real block under the same heading still counts and a
+        # section with only placeholders is listed as malformed at its end.
+        if (nkeys > 0) { blockdone = 1; finish() }
+      }
+    }
+    next
+  }
+  fence = 1; flen = run; ffile = FILENAME; fline = FNR
+  if (instats) {
+    split(tolower(rest), w, /[ \t]+/)
+    if (w[1] == "" || w[1] == "yaml" || w[1] == "yml") {
+      if (blockdone) print "run-stats: second block under one heading (use \"## Run stats — <label>\"): " clean(FILENAME) ":" FNR > "/dev/stderr"
+      else { collecting = 1; hadstatsfence = 1 }
+    }
   }
   next
 }
 
-!fence && /^##[ \t]*Run stats[ \t]*$/ { finish(); instats = 1; started = 1; reset(); next }
+# An accepted stats heading: level 2, then exactly "Run stats", which must end the
+# heading or be followed by a non-word byte, so a suffixed heading parses and
+# "## Run statsheet" does not. 0-3 leading spaces are a heading; a tab or 4+ are a
+# code block. Not inside a fence - there it is quoted text - except the stats
+# fence itself: an accepted heading seen while collecting is the only evidence
+# that counts that it was never closed (a generic "## ..." line is a valid YAML
+# comment). abandon() settles that, then the heading starts the new section.
+(!fence || collecting) && hl == 2 && htext ~ /^[ \t]*Run stats([^A-Za-z0-9_]|$)/ {
+  if (collecting) abandon()
+  finish(); instats = 1; started = 1; hadstatsfence = 0; blockdone = 0; bfile = FILENAME; bline = FNR; reset(); next
+}
 
-!fence && instats && /^#/ { finish(); instats = 0 }
+# Near miss: a level 2+ heading (0-3 leading spaces, any case) that says "run
+# stats" but was not accepted above. Level 1 is exempt - the title of the example
+# file is "# Run stats". So is a level 3+ heading inside an accepted section: it
+# is a sub-heading there. tolower is ASCII-only under LC_ALL=C.
+!fence && hl >= 2 && !(instats && hl >= 3) && tolower(htext) ~ /^[ \t]*run[ \t]+stats([^A-Za-z0-9_]|$)/ {
+  print "run-stats: heading not parsed (expected \"## Run stats\"): " clean(FILENAME) ":" FNR > "/dev/stderr"
+}
+
+# A section ends only at an H1 or H2, so a "### Phase 1" sub-heading inside it
+# does not cut the block off.
+!fence && instats && (hl == 1 || hl == 2) { finish(); instats = 0 }
 
 collecting {
   line = $0
@@ -141,7 +307,7 @@ collecting {
   val = substr(line, p + 1)
   gsub(/^[ \t]+|[ \t]+$/, "", key)
   gsub(/^[ \t]+|[ \t]+$/, "", val)
-  gsub(/[\001-\037\177]/, "?", val)
+  val = clean(val)
   if (key !~ /^[a-z_]+$/ || !(key in allowed) || val == "") { badlines++; next }
   cur[key] = val
   nkeys++
@@ -149,12 +315,12 @@ collecting {
 }
 
 END {
-  finish()
+  flush_file()
 
   printf "%d block(s) from %d file(s) scanned.\n\n", n, nfiles
   if (n == 0) {
     print "run-stats: no run-stats blocks found."
-    if (malformed || badlines) printf "(%d malformed, %d unparsable line(s))\n", malformed + 0, badlines + 0
+    diagnostics()
     exit 0
   }
 
@@ -191,4 +357,11 @@ END {
 
   diagnostics()
 }
-' "${files[@]}"
+AWK
+
+# LC_ALL=C so "byte-level" means the same thing in gawk and mawk: the heading
+# boundary and the control-byte classes are byte classes, not locale ones.
+# Trade-off, accepted: substr and printf widths then count bytes, so a non-ASCII
+# slug can be cut mid-character in the table. clean() needs the byte classes.
+LC_ALL=C awk -v nfiles="${#files[@]}" "$clean_awk
+$prog" "${files[@]}"
