@@ -16,6 +16,12 @@ and a clone reads the tag.
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-10-09
+
+Minor: a new run-stats sentinel and key, and a changed `plan-gates` procedure
+(the stats block is seeded at plan time and kept as a running ledger); nothing
+removed — `gates_failed_first_pass` still parses. ([#17])
+
 ### Added
 
 - **`pending` sentinel for run stats.** An abandoned or in-flight run used to
@@ -287,7 +293,8 @@ earlier release to upgrade from.
 
 Landed as pull requests [#1], [#2], [#3], and [#4].
 
-[Unreleased]: https://github.com/JulesNsenda/claude-workflow/compare/v1.3.1...HEAD
+[Unreleased]: https://github.com/JulesNsenda/claude-workflow/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/JulesNsenda/claude-workflow/compare/v1.3.1...v1.4.0
 [1.3.1]: https://github.com/JulesNsenda/claude-workflow/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/JulesNsenda/claude-workflow/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/JulesNsenda/claude-workflow/compare/v1.1.0...v1.2.0
@@ -304,3 +311,4 @@ Landed as pull requests [#1], [#2], [#3], and [#4].
 [#11]: https://github.com/JulesNsenda/claude-workflow/pull/11
 [#13]: https://github.com/JulesNsenda/claude-workflow/pull/13
 [#15]: https://github.com/JulesNsenda/claude-workflow/pull/15
+[#17]: https://github.com/JulesNsenda/claude-workflow/pull/17
