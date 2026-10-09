@@ -95,9 +95,12 @@ reasoning transcripts**.
    written at the end of Phase 2, and **Run stats**, seeded now as a running
    ledger: each later checkpoint updates the keys whose *Filled at* names it,
    never end-of-run recall. The format and seed rules live in the
-   **claude-workflow** clone, not the current project (`scripts/` is not
+   **claude-workflow** clone that the `~/.claude/skills/plan-gates` link points
+   into (not the current project; `scripts/` is not
    symlinked into `~/.claude`): read `scripts/run-stats.example.md` there
-   rather than reconstructing the keys from memory. Those sections, sized to
+   rather than reconstructing the keys from memory. If the link doesn't
+   resolve, say so and skip the format read and the close check; never use a
+   copy from the current project. Those sections, sized to
    the task — cover the substance, nothing beyond it, no filler or
    restatement. That is a brevity rule for prose, **not** for the per-finding
    rejection reasons step 4 requires: never drop one of those to save space.
@@ -189,7 +192,8 @@ has become `unknown` stays `unknown`.
    and if a Gate 3/4 failure is a defect both critic passes missed, note it in
    the plan.
 10. **Commit per plan-item** as it clears all five gates — tick its checkbox in
-   the same commit, and update the ledger. Don't batch the whole plan into one
+   the same commit, with the commit subject in backticks on that line, and
+   update the ledger. Don't batch the whole plan into one
    commit; per-item commits bound derailment and make reverts cheap. If one
    plan-item needs a third fix loop, or `agents_spawned` passes about twice
    what the plan implied (the Phase 1 panel plus ~6 per plan-item), stop and
@@ -197,8 +201,8 @@ has become `unknown` stays `unknown`.
 11. **Write the change summary** after the last plan-item commit. First close
    the ledger, resolving every `pending` to a real value or `unknown`. Then
    check it as CI checks the canonical example: copy the plan file into an
-   empty temp directory and run the claude-workflow clone's
-   `scripts/run-stats.sh` on that directory. The close is done only when the
+   empty temp directory and run `scripts/run-stats.sh` from the same clone as
+   step 5 (never the current project) on that directory. The close is done only when the
    output says `Ratios over 1 complete run(s).`, nothing follows the
    `dropped without individual reasons` line, and stderr is empty. Then bring
    the plan file up to date if scope legitimately changed, so the summary is written
@@ -209,7 +213,7 @@ has become `unknown` stays `unknown`.
    there is no PR, so the two can't drift. Keep it short and in plain
    language:
    - **What changed and why** — one line per plan-item, named by its commit
-     subject (hashes don't survive a squash or rebase merge).
+     subject in backticks (hashes don't survive a squash or rebase merge).
    - **How to check it** — the Gate 4 runtime check, restated so someone else
      can repeat it.
    - **What was deliberately not done** — scope that was cut.

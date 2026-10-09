@@ -149,6 +149,19 @@ jobs:
           done
           echo "$out" | grep -qF -- "$want" \
             || { echo "::error::gate tally changed — expected: $want"; exit 1; }
+          # The light example sits outside the stats section, so the parser must
+          # not read it as a run. A leaked example would NOT move the numbers
+          # above (the full run's headline is unchanged), so this refute is the
+          # only guard: a light line here means the example leaked into the corpus.
+          if echo "$out" | grep -q 'light gear:'; then
+            echo "::error::the light example was parsed as a run"; exit 1
+          fi
+          # Same for the late-escape line: the example carries escaped_late: 0, and
+          # the line prints only for a sum above 0, so seeing it here means the
+          # guard is gone (or the example stopped being zero).
+          if echo "$out" | grep -q 'escaped incl. found after merge'; then
+            echo "::error::the late-escape line printed for a zero sum"; exit 1
+          fi
           # Two checks that do not depend on any message's wording. The example
           # must be warning-free (stderr empty), and nothing may print after the
           # last ratio line: diagnostics() and the listings come after it, so if
@@ -182,6 +195,13 @@ jobs:
           fresh() { rm -rf "$fx"; mkdir -p "$fx"; }
 
           # A complete block: $1 = date, $2 = slug.
+          # The light example, cut out of the format doc so it stays the single
+          # source of its shape: from the Light gear paragraph to the first closing
+          # fence, CRs stripped (Markdown checks out CRLF on Windows).
+          light_block() {
+            sed -n '/^\*\*Light gear\.\*\*/,$p' scripts/run-stats.example.md | tr -d '\r' | sed -n '/^```yaml$/,/^```$/{p;/^```$/q}'
+          }
+
           block() {
             printf '```yaml\ndate: %s\nslug: %s\ngear: full\neffort_plan: high\neffort_diff: high\n' "$1" "$2"
             printf 'findings_plan_actioned: 1\nfindings_plan_rejected: 0\nfindings_plan_dropped: 0\n'
@@ -202,6 +222,11 @@ jobs:
           # its closing fence; the assertion for a single counted run.
           head_run() { printf '# P\n\n## Run stats\n\n'; }
           open_block() { block "$@" | sed '$d'; }
+          # A complete block with escaped_late appended: $1 = date, $2 = slug, $3 = the
+          # value. Appended with printf, not a sed newline replacement (GNU-only).
+          late_block() { open_block "$1" "$2"; printf 'escaped_late: %s\n```\n' "$3"; }
+          # The light example with escaped_late appended: $1 = the value.
+          late_light() { light_block | sed '$d'; printf 'escaped_late: %s\n```\n' "$1"; }
           one_run() { expect 'Ratios over 1 complete run(s).' "$1"; }
 
           # The assertions record a failure and carry on, so a broken parser (or a
@@ -491,10 +516,14 @@ jobs:
           printf '# P\n\n## Run stats\n\n```yaml\ndate: 2026-01-01\n' > "$fx/${pre}z.md" # unclosed
           { printf '# P\n\n## Run stats\n\n'; block 2026-01-02 pend-name | sed 's/^escaped: 0$/escaped: pending/'; } > "$fx/${pre}p.md" # pending
           { printf '# P\n\n## Run stats\n\n'; gblock 2026-01-03 bad-gates 'gates_failed: 9'; } > "$fx/${pre}g.md" # malformed gates_failed
+          { head_run; block 2026-01-04 gear-name | sed 's/^gear: full$/gear: ful/'; } > "$fx/${pre}t.md" # bad gear
+          { head_run; late_block 2026-01-05 late-name 2x; } > "$fx/${pre}l.md" # malformed escaped_late
           run
           refute_bytes '\033' 'fixture 30 (ESC from a filename)'
+          expect "  $fx/esc?[31m?t.md:3" 'fixture 30 (gear listing)'
           expect "  $fx/esc?[31m?p.md:3" 'fixture 30 (pending listing)'
           expect "  $fx/esc?[31m?g.md:3" 'fixture 30 (malformed gates_failed listing)'
+          expect "  $fx/esc?[31m?l.md:3" 'fixture 30 (malformed escaped_late listing)'
           expect "heading not parsed (expected \"## Run stats\"): $fx/esc?[31m?n.md:3" 'fixture 30 (near-miss warning)'
           expect "  $fx/esc?[31m?u.md:3" 'fixture 30 (unfilled listing)'
           expect "  $fx/esc?[31m?m.md:3" 'fixture 30 (malformed listing)'
@@ -563,7 +592,7 @@ jobs:
           { head_run; block 2026-08-12 unknown-counter | sed 's/^escaped: 0$/escaped: unknown/'
             printf '\n## Run stats — two\n\n'; block 2026-08-13 junk-counter | sed 's/^escaped: 0$/escaped: many/'; } > "$fx/inc.md"
           run
-          expect 'No run had a complete set of counters' 'fixture 36 (no-usable-run message)'
+          expect 'No full-gear run had a complete set of counters — no headline ratios computed.' 'fixture 36 (no-usable-run message)'
           refute 'Ratios over' 'fixture 36 (no ratios computed)'
           expect '2 run(s) excluded from the ratios (incomplete counters).' 'fixture 36 (excluded count)'
           expect '1 counter(s) recorded as unknown or missing.' 'fixture 36 (unknown counted)'
@@ -832,6 +861,242 @@ jobs:
           { head_run; closed_block; printf '\n## run stats\n'; } > "$fx/warn.md"
           if close_ok "$fx/warn.md"; then red "fixture 55: a stderr warning passed the close check"
           else echo "  ok - fixture 55 (a stderr warning fails the close check)"; fi
+
+          # 56 - light gear is reported on its own line and never pooled into the
+          # headline. The light block is extracted from the example (the doc stays
+          # the single source of its shape) and parsed beside a full run with a
+          # DIFFERENT escape rate (0 of 2 against the light 1 of 2), so a parser
+          # that pools them moves the headline off 0.0% and the 1-run count off 1.
+          # The full run is marked escalated from light, hence the k of 1. The
+          # light block has no plan-stage keys: reporting them as unknown counters
+          # would mean the light completeness rule is gone.
+          fresh
+          { head_run; light_block; } > "$fx/light.md"
+          { head_run; block 2026-08-20 full-escalated | sed 's/^escalated_from: none$/escalated_from: light/'; } > "$fx/full.md"
+          run
+          want56='light gear: escaped review 50.0% (1 runs; 1 full runs escalated from light)'
+          expect 'escaped both passes      0.0%  (0/2)' 'fixture 56 (headline is full runs only)'
+          one_run 'fixture 56 (the light run is not in the full count)'
+          refute 'second block' 'fixture 56 (the extracted example is one clean block)'
+          refute 'recorded as unknown or missing' 'fixture 56 (a light run is not missing plan-stage keys)'
+          refute 'excluded from the ratios' 'fixture 56 (the light run is complete)'
+          if [ "$(printf '%s\n' "$out" | grep -A1 'escaped both passes' | tail -1)" = "$want56" ]
+          then echo "  ok - fixture 56 (the exact light line sits directly under escaped both passes)"
+          else red "fixture 56: the light line is not directly under escaped both passes"; fi
+          last=$(printf '%s\n' "$out" | grep -v '^$' | tail -1)
+          case $last in *'dropped without individual reasons'*) echo "  ok - fixture 56 (still ends on the dropped line)" ;;
+            *) red "fixture 56: output no longer ends on the dropped line" ;; esac
+
+          # 57 - a corpus with no full run omits the headline and says so, and
+          # the light line still prints (n = 1, k = 0). Neither the ratio header
+          # nor the rejection line may appear.
+          fresh
+          { head_run; light_block; } > "$fx/light.md"
+          run
+          expect 'No full-gear run — headline ratios omitted.' 'fixture 57 (no-full-run message)'
+          expect 'light gear: escaped review 50.0% (1 runs; 0 full runs escalated from light)' 'fixture 57 (light line without a full run)'
+          refute 'Ratios over' 'fixture 57 (no headline)'
+          refute 'critic rejection rate' 'fixture 57 (no rejection line)'
+          refute 'had a complete set of counters' 'fixture 57 (not the all-incomplete message)'
+
+          # 58 - a gear that is neither full nor light is listed by file:line and
+          # the run stays out of every ratio; the good full run beside it is
+          # untouched and no light line appears.
+          fresh
+          { head_run; block 2026-08-21 gear-typo | sed 's/^gear: full$/gear: ful/'; } > "$fx/g.md"
+          { head_run; block 2026-08-22 gear-ok; } > "$fx/ok.md"
+          # A light-shaped block with a mis-cased gear: its plan-stage keys are
+          # absent, so only the gear listing may speak (no unknown counters).
+          { head_run; light_block | sed 's/^gear: light$/gear: Light/'; } > "$fx/cased.md"
+          run
+          expect '2 gear value(s) not full or light (run left out of the ratios):' 'fixture 58 (bad gear has its own listing)'
+          expect "  $fx/g.md:3" 'fixture 58 (bad gear named by file:line)'
+          expect "  $fx/cased.md:3" 'fixture 58 (mis-cased gear named by file:line)'
+          refute 'recorded as unknown' 'fixture 58 (a bad-gear run is not scored on counters)'
+          refute 'neither an integer' 'fixture 58 (a bad-gear run is not scored on counters, suspect)'
+          one_run 'fixture 58 (bad gear is out of the ratios)'
+          refute 'light gear:' 'fixture 58 (a typo is not read as light)'
+          refute 'excluded from the ratios' 'fixture 58 (not counted as an incomplete run)'
+
+          # 59 - a light run whose escaped is not an integer is incomplete and
+          # stays out of the light line, as its own counter diagnostics say; a
+          # block with no gear key at all is a full run (older blocks).
+          fresh
+          { head_run; light_block | sed 's/^escaped: 1$/escaped: many/'; } > "$fx/light.md"
+          { head_run; block 2026-08-23 no-gear | sed '/^gear: full$/d'; } > "$fx/nogear.md"
+          run
+          expect '1 run(s) excluded from the ratios (incomplete counters).' 'fixture 59 (junk light counter makes the run incomplete)'
+          expect '1 counter(s) were neither an integer nor "unknown"' 'fixture 59 (reported as suspect)'
+          refute 'light gear:' 'fixture 59 (incomplete light run is not reported)'
+          one_run 'fixture 59 (a block with no gear key is a full run)'
+
+          # 60 - a clean light run (nothing actioned, nothing escaped) has no rate
+          # to give: n/a, not a division by zero.
+          fresh
+          { head_run; light_block | sed 's/^findings_diff_actioned: 1$/findings_diff_actioned: 0/; s/^escaped: 1$/escaped: 0/'; } > "$fx/light.md"
+          run
+          expect 'light gear: escaped review n/a (1 runs; 0 full runs escalated from light)' 'fixture 60 (clean light run reads n/a)'
+
+          # 61 - gear: pending (a seeded, unclosed block) is not a gear typo: it is
+          # listed as still pending and counted as excluded, with no gear listing.
+          fresh
+          { head_run; block 2026-08-24 seeded-gear | sed 's/^gear: full$/gear: pending/'; } > "$fx/p.md"
+          { head_run; block 2026-08-25 gear-pending-ok; } > "$fx/ok.md"
+          run
+          expect '1 run(s) still pending (unfinished or abandoned):' 'fixture 61 (pending gear is a pending run)'
+          expect '1 run(s) excluded from the ratios (incomplete counters).' 'fixture 61 (pending gear counted as excluded)'
+          refute 'gear value(s)' 'fixture 61 (pending gear is not a gear typo)'
+          one_run 'fixture 61 (only the finished run counts)'
+
+          # 62 - a full run escalated from light counts toward k whatever its
+          # completeness, so the selection-bias flag cannot vanish with the run.
+          # Alone, it also exercises the all-incomplete message and the n/a line.
+          fresh
+          { head_run; block 2026-08-26 escalated-pending | sed 's/^escaped: 0$/escaped: pending/; s/^escalated_from: none$/escalated_from: light/'; } > "$fx/e.md"
+          run
+          expect 'light gear: escaped review n/a (0 runs; 1 full runs escalated from light)' 'fixture 62 (an incomplete escalated run still counts in k)'
+          expect 'No full-gear run had a complete set of counters' 'fixture 62 (full runs exist but none is complete)'
+
+          # 63 - the same k flag on the headline path: a COMPLETE full run
+          # escalated from light, with no light run beside it, still prints the
+          # light line (0 runs, k of 1). Fixture 62 only reaches the no-headline
+          # branch, so a light-line condition that dropped k on this branch
+          # survived until this fixture.
+          fresh
+          { head_run; block 2026-08-27 escalated-complete | sed 's/^escalated_from: none$/escalated_from: light/'; } > "$fx/e.md"
+          run
+          one_run 'fixture 63 (the escalated run is complete)'
+          expect 'light gear: escaped review n/a (0 runs; 1 full runs escalated from light)' 'fixture 63 (k alone prints the light line under a headline)'
+
+          # 64 - the pending scan covers every gear class. A light run closed
+          # with escaped still pending is listed as pending and kept out of the
+          # light line (its counters are not integers, so the counter loop alone
+          # would have read it as complete); a bad-gear run holding a pending
+          # key is still listed as pending, beside its own gear listing.
+          fresh
+          { head_run; light_block | sed 's/^escaped: 1$/escaped: pending/'; } > "$fx/lp.md"
+          { head_run; block 2026-08-28 bad-pending | sed 's/^gear: full$/gear: ful/; s/^escaped: 0$/escaped: pending/'; } > "$fx/bp.md"
+          run
+          expect '2 run(s) still pending (unfinished or abandoned):' 'fixture 64 (pending is scanned for light and bad gear)'
+          expect "  $fx/lp.md:3" 'fixture 64 (pending light run named by file:line)'
+          expect "  $fx/bp.md:3" 'fixture 64 (pending bad-gear run named by file:line)'
+          expect '1 gear value(s) not full or light (run left out of the ratios):' 'fixture 64 (bad gear still has its own listing)'
+          refute 'light gear:' 'fixture 64 (a pending light run is not a complete light run)'
+
+          # 65 - escaped_late: an absent key reads as 0 and a 1 adds to it, over
+          # complete full runs. Two runs with real = 4 and late = 1 give
+          # (0+1)/(4+1) = 20.0%, and "Ratios over 2" shows the absent-key run was
+          # not dropped (a gating escaped_late would drop it). The line sits
+          # directly under "escaped both passes" with no light run, and directly
+          # under the light line once there is one.
+          want65='escaped incl. found after merge   20.0%  (1/5, 2 runs)'
+          fresh
+          { head_run; block 2026-09-21 late-absent; } > "$fx/a.md"
+          { head_run; late_block 2026-09-22 late-one 1; } > "$fx/b.md"
+          run
+          expect 'Ratios over 2 complete run(s).' 'fixture 65 (a run with no escaped_late is still complete)'
+          if [ "$(printf '%s\n' "$out" | grep -A1 'escaped both passes' | tail -1)" = "$want65" ]
+          then echo "  ok - fixture 65 (the exact late line sits directly under escaped both passes)"
+          else red "fixture 65: the late line is missing, wrong, or not under escaped both passes"; fi
+          refute 'escaped_late value(s)' 'fixture 65 (1 and absent are not listed)'
+          { head_run; light_block; } > "$fx/light.md"
+          run
+          if [ "$(printf '%s\n' "$out" | grep -A1 'light gear:' | tail -1)" = "$want65" ]
+          then echo "  ok - fixture 65 (the late line sits directly under the light line)"
+          else red "fixture 65: the late line is not directly under the light line"; fi
+
+          # 66, 68, 71 - an escaped_late that is not an integer (2x prose, pending,
+          # unknown) is listed by file:line as not counted, and its run leaves the
+          # late population, but the run stays complete in the headline: the line
+          # stays silent (nothing to sum), the value is never coerced (2x is not 2),
+          # pending does not hold the run open (it is outside the pending scan), and
+          # unknown is not a counter diagnostic.
+          for v in 2x pending unknown; do
+            fresh
+            { head_run; late_block 2026-09-23 "late-$v" "$v"; } > "$fx/m.md"
+            run
+            expect '1 escaped_late value(s) not counted:' "fixture 66 ($v has its own listing)"
+            expect "  $fx/m.md:3" "fixture 66 ($v named by file:line)"
+            one_run "fixture 66 ($v: the run is still complete)"
+            refute 'escaped incl. found after merge' "fixture 66 ($v is not coerced into the sum)"
+            refute 'excluded from the ratios' "fixture 66 ($v: not an incomplete run)"
+            refute 'neither an integer' "fixture 66 ($v: not a suspect counter)"
+            refute 'still pending' "fixture 66 ($v: the pending scan does not cover escaped_late)"
+            refute 'recorded as unknown' "fixture 66 ($v: not a counter)"
+          done
+
+          # 67 - a clean run (late 1) beside a malformed one (2x): the line uses the
+          # clean run alone, (0+1)/(2+1) over 1 run. A malformed run left in the
+          # denominator would read 20.0% (1/5, 2 runs).
+          fresh
+          { head_run; late_block 2026-09-24 late-known 1; } > "$fx/a.md"
+          { head_run; late_block 2026-09-25 late-junk 2x; } > "$fx/b.md"
+          run
+          expect 'Ratios over 2 complete run(s).' 'fixture 67 (the malformed run keeps its place in the headline)'
+          expect 'escaped incl. found after merge   33.3%  (1/3, 1 runs)' 'fixture 67 (the late line uses the clean run alone)'
+          expect '1 escaped_late value(s) not counted:' 'fixture 67 (the malformed run is listed)'
+          expect "  $fx/b.md:3" 'fixture 67 (named by file:line)'
+
+          # 69 - an absent escaped_late and an explicit 0 are the same value: two
+          # otherwise identical blocks in two files are a duplicate, not a
+          # (date, slug) pair with different values.
+          fresh
+          { head_run; block 2026-09-27 late-dup; } > "$fx/a.md"
+          { head_run; late_block 2026-09-27 late-dup 0; } > "$fx/b.md"
+          run
+          expect '1 duplicate block(s) (identical values)' 'fixture 69 (absent and 0 are one value)'
+          refute 'pair(s)' 'fixture 69 (not read as differing values)'
+
+          # 70 - only complete full runs are summed. An incomplete full run (a
+          # diff counter unknown) and a light run both carry an escaped_late; if
+          # either leaked in, the line would read more than (0+1)/(2+1) over 1
+          # run. Both are listed as not counted.
+          fresh
+          { head_run; late_block 2026-09-28 late-complete 1; } > "$fx/a.md"
+          { head_run; late_block 2026-09-29 late-incomplete 5 | sed 's/^findings_diff_actioned: 1$/findings_diff_actioned: unknown/'; } > "$fx/b.md"
+          { head_run; late_light 3; } > "$fx/light.md"
+          run
+          expect 'escaped incl. found after merge   33.3%  (1/3, 1 runs)' 'fixture 70 (incomplete and light runs are not summed)'
+          expect '2 escaped_late value(s) not counted:' 'fixture 70 (both are listed)'
+
+          # 72 - escaped_late is part of the duplicate key: the same (date, slug) in
+          # two files with escaped_late 0 versus 1 is a pair with different
+          # values, not a duplicate.
+          fresh
+          { head_run; late_block 2026-10-01 late-pair 0; } > "$fx/a.md"
+          { head_run; late_block 2026-10-01 late-pair 1; } > "$fx/b.md"
+          run
+          expect '1 (date, slug) pair(s) appear in more than one file with different values' 'fixture 72 (0 versus 1 differ)'
+          refute 'duplicate' 'fixture 72 (not a duplicate)'
+
+          # 73 - a light run and a bad-gear run carrying escaped_late are listed as
+          # not counted, and the light line is unchanged by it.
+          fresh
+          { head_run; late_light 2; } > "$fx/light.md"
+          { head_run; late_block 2026-10-02 late-bad-gear 1 | sed 's/^gear: full$/gear: ful/'; } > "$fx/g.md"
+          run
+          expect '2 escaped_late value(s) not counted:' 'fixture 73 (light and bad-gear runs are listed)'
+          expect 'light gear: escaped review 50.0% (1 runs; 0 full runs escalated from light)' 'fixture 73 (the light line is unchanged)'
+          refute 'escaped incl. found after merge' 'fixture 73 (neither run joins the late line)'
+
+          # 74 - a bad-gear run is not scored, so its gates_failed stays out of the
+          # fix-loop tally; the finished sibling (none) is the only tallied run.
+          fresh
+          { head_run; gblock 2026-10-03 bad-gear-loops 'gates_failed: 2,4' | sed 's/^gear: full$/gear: ful/'; } > "$fx/g.md"
+          { head_run; gblock 2026-10-04 good-gear 'gates_failed: none'; } > "$fx/ok.md"
+          run
+          expect 'runs with a fix loop, by gate (1 runs with gates_failed): G1 0 · G2 0 · G3 0 · G4 0 · G5 0' 'fixture 74 (a bad-gear run is not tallied)'
+
+          # 75 - the late line's numerator and denominator carry the run's own
+          # escaped, not only escaped_late. Every fixture above has escaped 0, so
+          # a line built from escaped_late alone (or one that left escaped out of
+          # the accumulators) read the same there. Here escaped is 1 and late is 1
+          # over real = 3: (1 + 1) / (3 + 1) = 2/4, and the headline stays 1/3.
+          fresh
+          { head_run; late_block 2026-10-03 late-with-escape 1 | sed 's/^escaped: 0$/escaped: 1/'; } > "$fx/a.md"
+          run
+          expect 'escaped both passes     33.3%  (1/3)' 'fixture 75 (the headline carries escaped alone)'
+          expect 'escaped incl. found after merge   50.0%  (2/4, 1 runs)' 'fixture 75 (the late line adds escaped_late to escaped and to the base)'
 
           exit "$fail"
 

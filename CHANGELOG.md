@@ -16,6 +16,40 @@ and a clone reads the tag.
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-10-09
+
+Minor: a light-gear stats record and the `escaped_late` key with its procedure;
+one new hard rule pointing at that procedure. Nothing removed or renamed. ([#21])
+
+### Added
+
+- **Light-gear run record.** A light run closes by appending a short `## Run
+  stats` block to `docs/plans/light-runs.md` (only if that file is gitignored,
+  otherwise it asks once per project). `run-stats.sh` reports
+  them on their own `light gear: escaped review` line, with a count of full runs
+  escalated from light; `gear` now accepts `full` or `light` and lists anything
+  else by file:line.
+- **Late escapes.** A fix traced to a commit named in a closed, gitignored
+  full-gear plan can be recorded against that run as `escaped_late`, after the
+  user confirms, and `run-stats.sh` adds an `escaped incl. found after merge`
+  line when the sum is above 0. The procedure is under *Late escapes* in
+  `scripts/run-stats.example.md`. Pull the clone, or the new key reads as an
+  unparsable line.
+
+### Changed
+
+- **Light records no longer carry a `Commit:` line.** Light runs are not
+  eligible for late escapes.
+- **The fix-loop tally skips runs with a bad `gear`.** They have no partition
+  to be scored in, so they no longer feed the per-gate counts.
+- **The `run-stats.sh` headline is computed over full-gear runs only.** Output
+  is byte-identical on an all-full corpus. With no full run it prints `No
+  full-gear run — headline ratios omitted.` and omits the rejection and
+  "dropped" lines. When full runs exist but none is complete, the message is now
+  `No full-gear run had a complete set of counters — no headline ratios
+  computed.` Pull the clone, or a light block's missing plan keys read as
+  unknown counters.
+
 ## [1.5.0] - 2026-10-09
 
 Minor: two new `plan-gates` rules (project-aware critics, plan sizing); nothing
@@ -312,7 +346,8 @@ earlier release to upgrade from.
 
 Landed as pull requests [#1], [#2], [#3], and [#4].
 
-[Unreleased]: https://github.com/JulesNsenda/claude-workflow/compare/v1.5.0...HEAD
+[Unreleased]: https://github.com/JulesNsenda/claude-workflow/compare/v1.6.0...HEAD
+[1.6.0]: https://github.com/JulesNsenda/claude-workflow/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/JulesNsenda/claude-workflow/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/JulesNsenda/claude-workflow/compare/v1.3.1...v1.4.0
 [1.3.1]: https://github.com/JulesNsenda/claude-workflow/compare/v1.3.0...v1.3.1
@@ -333,3 +368,4 @@ Landed as pull requests [#1], [#2], [#3], and [#4].
 [#15]: https://github.com/JulesNsenda/claude-workflow/pull/15
 [#17]: https://github.com/JulesNsenda/claude-workflow/pull/17
 [#19]: https://github.com/JulesNsenda/claude-workflow/pull/19
+[#21]: https://github.com/JulesNsenda/claude-workflow/pull/21
