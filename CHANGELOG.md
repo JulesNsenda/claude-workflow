@@ -16,6 +16,25 @@ and a clone reads the tag.
 
 ## [Unreleased]
 
+### Added
+
+- **Light-gear run record.** A light run closes by appending a short `## Run
+  stats` block to `docs/plans/light-runs.md` (only if that file is gitignored,
+  otherwise it asks once per project), with a `Commit:` line under it. `run-stats.sh` reports
+  them on their own `light gear: escaped review` line, with a count of full runs
+  escalated from light; `gear` now accepts `full` or `light` and lists anything
+  else by file:line.
+
+### Changed
+
+- **The `run-stats.sh` headline is computed over full-gear runs only.** Output
+  is byte-identical on an all-full corpus. With no full run it prints `No
+  full-gear run — headline ratios omitted.` and omits the rejection and
+  "dropped" lines. When full runs exist but none is complete, the message is now
+  `No full-gear run had a complete set of counters — no headline ratios
+  computed.` Pull the clone, or a light block's missing plan keys read as
+  unknown counters.
+
 ## [1.5.0] - 2026-10-09
 
 Minor: two new `plan-gates` rules (project-aware critics, plan sizing); nothing

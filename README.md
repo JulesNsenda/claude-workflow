@@ -303,6 +303,8 @@ change summary. It holds findings actioned, rejected and dropped at each critic
 pass, defects that escaped both passes, agents spawned, and which gates needed
 a fix loop (`gates_failed`, a list such as `2,4`, tallied per gate; the older
 `gates_failed_first_pass` count still parses and shows as `n=2`).
+Light-gear runs write a shorter block, to `docs/plans/light-runs.md`, that the
+parser reports on its own line, apart from the full-gear ratios.
 [`scripts/run-stats.sh`](./scripts/run-stats.sh) aggregates those blocks; the
 format is [`scripts/run-stats.example.md`](./scripts/run-stats.example.md). A
 key holding `pending` (not reached yet) lists the run as still pending and keeps
@@ -319,9 +321,11 @@ The point is to stop describing this workflow with adjectives. What the schema
 actually answers is **critic yield**: how much gets caught at plan stage versus
 diff stage versus escaping both passes. Two other questions worth asking — are
 the gear thresholds right, and where does the token budget go — are *not*
-instrumented: there is no cost or duration key, and the block is only written by
-the full-gear procedure, so lighter runs leave no row (`escalated_from` is the
-only trace one ever existed).
+instrumented: there is no cost or duration key. Light runs are recorded when
+`docs/plans/light-runs.md` is gitignored or the user agrees, so they are under-sampled, and one that
+went badly was escalated and recorded as a full run (the light line counts
+those); skip-gear runs leave no row (`escalated_from` is the only trace one
+ever existed).
 
 **What these numbers can and can't support.** This is a sample of one person's
 tasks, scored by the same person who chose the workflow — not a benchmark. It

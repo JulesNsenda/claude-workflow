@@ -1,14 +1,16 @@
 # Run stats — canonical format
 
 This file is the single source of truth for the `## Run stats` block that every
-full-gear plan file ends with. Three things read this format, and none of them
-enforces it on the others:
+full-gear plan file ends with (light-gear runs write a shorter one, see below).
+Four things read this format, and none of them enforces it on the others:
 
-- `skills/plan-gates/SKILL.md` tells the orchestrator to write the block,
+- `skills/plan-gates/SKILL.md` tells the orchestrator to write the full block,
+- the root `CLAUDE.md` tells it to write the light one,
 - `scripts/run-stats.sh` parses it,
 - this file is what the CI smoke test feeds the parser.
 
-So change the keys **here first**, then in the other two.
+So change the keys **here first**, then in `run-stats.sh` and `plan-gates`; the
+root `CLAUDE.md` only points here.
 
 ## Run stats
 
@@ -67,7 +69,7 @@ escalated_from: none
 | Key | Meaning | Filled at |
 |---|---|---|
 | `date`, `slug` | Match the plan filename. | plan written |
-| `gear` | `full` - only full-gear runs write this block. | plan written |
+| `gear` | `full` or `light`. Anything else is listed by file:line and the run is left out of the ratios. | plan written (full) / close (light) |
 | `effort_plan` | Effort the critics ran at in the plan pass. Re-count if the plan is revised and re-reviewed before approval. | plan written |
 | `effort_diff` | Effort the critics ran at in the diff pass. `mixed` if a later pass ran at a different effort. | each Gate 2 triage |
 | `findings_plan_actioned` | Findings that changed the work. Re-count the `findings_plan_*` keys if the plan is revised and re-reviewed before approval. | plan written |
@@ -76,13 +78,38 @@ escalated_from: none
 | `findings_diff_rejected` | As `findings_plan_rejected`, for the diff pass. Running totals, as for `findings_diff_actioned`. | each Gate 2 triage |
 | `findings_plan_dropped` | `medium`/`low` findings dropped without individual reasons. Counted so the rejection rate can't read as a whole-panel number when it only saw the severe tail. | plan written |
 | `findings_diff_dropped` | As `findings_plan_dropped`, for the diff pass. Running totals, as for `findings_diff_actioned`. | each Gate 2 triage |
-| `escaped` | Defects **both critic passes missed**, caught at Gate 3, Gate 4, or by you afterwards. The most important number here. | close |
+| `escaped` | Defects **both critic passes missed**, caught at Gate 3, Gate 4, or by you afterwards. The most important number here. In a light run: defects the one reviewer missed, caught by the test or the runtime check before the run was done. | close |
 | `agents_spawned` | Total across both phases, including fix-loop re-runs. Seeded with the Phase 1 count, then a running total; at close, add agents spent on work that never reached a commit. | plan written, then each plan-item commit, and at close |
 | `gates_failed` | Which of gates 1–5 needed a fix loop: `none`, `pending`, `unknown`, or a list such as `2,4`. It is a list of gate numbers, not a count — `2` means gate 2 looped. Spaces around commas are ignored, brackets are dropped, order is normalised and duplicates collapsed, so `[4, 2]` reads as `2,4`. Each gate is listed once however many loops it took. Gate 5's re-verification counts as Gate 5, not as a second failure of gates 3–4. It is a dimension, not a ratio counter: apart from `pending`, it never excludes a run from the ratios. A value that is none of those is reported on its own line. Seeded `none`; on the first fix loop *replace* `none` with that gate, on later loops append (`none,2` is not a valid value). | each fix loop |
 | `gates_failed_first_pass` | **Legacy only.** The older count of gates that needed a fix loop. Old blocks keep parsing and show as `n=2` in the GATES column; new blocks don't write it. | never — omit |
 | `escalated_from` | The gear the task *started* at if it moved up (`skip`, `light`); `none` if it started where it finished. | plan written |
 
-**Seeding.** Write the block when the plan is written, with every key present
+**Light gear.** A light run writes one short block when it closes, appended to
+`docs/plans/light-runs.md` under its own heading (`## Run stats — <date> <slug>`),
+only if `git check-ignore -q docs/plans/light-runs.md` exits 0 (ignored). On
+anything else (1, or 128 outside a repo) ask the user once per project and
+remember the answer in project memory. Add a
+prose line `Commit: <subject>` under the block, so a later bug can be traced to
+it. These eight lines are the whole record; the plan-stage keys are not written.
+`findings_diff_*` count the one reviewer's findings, at whatever stage it ran.
+The parser counts a light run as complete when its diff counters and `escaped`
+are integers, and reports the light runs on a line of their own, apart from the
+full-gear ratios. This fence sits outside the stats section, so the parser never
+reads it as a run; CI extracts it from here (keep it the first `yaml` fence after this
+paragraph).
+
+```yaml
+date: 2026-10-09
+slug: example-light
+gear: light
+findings_diff_actioned: 1
+findings_diff_rejected: 0
+findings_diff_dropped: 0
+escaped: 1
+escalated_from: none
+```
+
+**Seeding (full gear).** Write the block when the plan is written, with every key present
 except the legacy one: keys whose *Filled at* starts with "plan written" get
 their values, `gates_failed` starts at `none`, and every other key is `pending`.
 Derive the seed from this table, not by copying the illustrative block above —

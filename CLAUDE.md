@@ -36,7 +36,11 @@ gets silently bypassed, which is worse than a lighter one that gets used:
 - **Light.** A single self-contained change with real but bounded risk. Inline
   plan, **one** reviewer (`security-critic` *or* `architecture-critic` —
   whichever angle the change touches), then verify + test + a quick runtime
-  check.
+  check. Close by appending a light Run stats block to `docs/plans/light-runs.md`
+  (only if `docs/plans/light-runs.md` is gitignored; otherwise ask once per
+  project) — format: `scripts/run-stats.example.md` in the **claude-workflow**
+  clone, i.e. the target of the `~/.claude/skills/plan-gates` link, not the
+  current project.
 - **Full.** New features, multi-file refactors, schema/API changes, anything
   security-sensitive or approach-uncertain → **invoke the `plan-gates`
   skill** and follow it end to end.

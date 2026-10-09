@@ -95,7 +95,8 @@ reasoning transcripts**.
    written at the end of Phase 2, and **Run stats**, seeded now as a running
    ledger: each later checkpoint updates the keys whose *Filled at* names it,
    never end-of-run recall. The format and seed rules live in the
-   **claude-workflow** clone, not the current project (`scripts/` is not
+   **claude-workflow** clone, i.e. the target of the `~/.claude/skills/plan-gates`
+   link, not the current project (`scripts/` is not
    symlinked into `~/.claude`): read `scripts/run-stats.example.md` there
    rather than reconstructing the keys from memory. Those sections, sized to
    the task — cover the substance, nothing beyond it, no filler or
