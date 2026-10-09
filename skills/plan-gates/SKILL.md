@@ -34,7 +34,12 @@ reasoning transcripts**.
    fast tier). Planning on a wrong mental model is the most expensive error
    there is: the whole pipeline, reviewers included, inherits it.
 2. **Draft the plan** from your own analysis of the code and the request, on
-   the frontier tier — do not downgrade mid-plan.
+   the frontier tier — do not downgrade mid-plan. A plan-item is one
+   independently committable unit: one commit, one pass through the gates.
+   **Size it:** more than one independent concern means proposing a split into
+   separately approved plans, or dropping a minor concern to its own
+   light-gear change; more than ~5 plan-items is a prompt to look for one.
+   Large runs are where review stops converging and fix loops multiply.
 3. **Adversarial panel — at least 3 critics, in parallel** (single message,
    one `Agent` call each). Two are mandatory and predefined:
    - **`security-critic`** — always runs.
@@ -55,6 +60,16 @@ reasoning transcripts**.
    must not be able to edit the code it is reviewing. Every critic gets the
    full plan **and** repo access: reviewers must read the real code, so they
    catch "the plan assumes X but the code does Y."
+
+   **Prefer project-aware critics.** If a review agent specific to this
+   project is available (the repo's `.claude/agents/`, a plugin, or a
+   user-level one scoped to it), use it as a task-fit critic — as-is only if
+   it is read-only and emits `severity` and `confidence`; otherwise brief a
+   `general-purpose` critic with its file as a source. If convention sources
+   are available (convention skills, style guides), name their paths in every
+   critic's brief, the two predefined critics included — subagents can't
+   invoke skills. Critics blind to the house conventions were observed
+   (uncontrolled) to reject far more of their own findings.
 4. **Reconcile critiques into a final plan.** Where critics disagree, surface
    the disagreement and pick a side, briefly stating the deciding factor — do
    not paper over conflicts. Triaging low-value findings out is the session's
@@ -82,10 +97,10 @@ reasoning transcripts**.
    never end-of-run recall. The format and seed rules live in the
    **claude-workflow** clone, not the current project (`scripts/` is not
    symlinked into `~/.claude`): read `scripts/run-stats.example.md` there
-   rather than reconstructing the keys from memory. Those sections, sized to the task — cover the substance,
-   nothing beyond it, no filler or restatement. That is a
-   brevity rule for prose, **not** for the per-finding rejection reasons step 4
-   requires: never drop one of those to save space.
+   rather than reconstructing the keys from memory. Those sections, sized to
+   the task — cover the substance, nothing beyond it, no filler or
+   restatement. That is a brevity rule for prose, **not** for the per-finding
+   rejection reasons step 4 requires: never drop one of those to save space.
 6. **Stop for approval.** No production code until the user says "looks
    good" / "ship it" / "go ahead" or similar.
 
@@ -120,8 +135,9 @@ has become `unknown` stays `unknown`.
    plans — plus a correctness pass via the built-in `/code-review` skill,
    naming the level explicitly and never invoking it bare (the README's
    harness-assumptions section carries the version-stamped reason). The
-   built-in `/security-review` also fits security-sensitive diffs.
-   Weight this gate
+   built-in `/security-review` also fits security-sensitive diffs. If a
+   project-aware critic ran at plan stage, run it again here, and name the
+   same convention sources in each critic's brief. Weight this gate
    at least as heavily as the plan review; it's where most real defects are
    caught. Triage per Phase 1 step 4, recording into **Agent critiques
    considered — diff stage**. Each critic's `model:` line is self-reported, not
@@ -174,7 +190,10 @@ has become `unknown` stays `unknown`.
    the plan.
 10. **Commit per plan-item** as it clears all five gates — tick its checkbox in
    the same commit, and update the ledger. Don't batch the whole plan into one
-   commit; per-item commits bound derailment and make reverts cheap.
+   commit; per-item commits bound derailment and make reverts cheap. If one
+   plan-item needs a third fix loop, or `agents_spawned` passes about twice
+   what the plan implied (the Phase 1 panel plus ~6 per plan-item), stop and
+   offer the user a re-plan or a split of the remainder before continuing.
 11. **Write the change summary** after the last plan-item commit. First close
    the ledger, resolving every `pending` to a real value or `unknown`. Then
    check it as CI checks the canonical example: copy the plan file into an
