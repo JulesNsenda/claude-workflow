@@ -19,15 +19,26 @@
 #
 # Output besides the table and ratios:
 #   stdout  "never filled in" (a heading with no fence), "malformed" (a fence
-#           with no recognised key), duplicate blocks (identical values), and
-#           (date, slug) pairs shared across files with different values.
+#           with no recognised key), "still pending" (a run with `pending` in
+#           any key), a gates_failed value that is not a list of gates,
+#           duplicate blocks (identical values), and (date, slug) pairs shared
+#           across files with different values.
 #   stderr  a near-miss heading that was not parsed; an unclosed fence (its
 #           partial block is discarded, never counted); a second block under
 #           one heading (not parsed).
 #
 # A run is excluded from the ratios entirely unless all seven counter values
 # parse as integers — "unknown" removes the run from both numerator and
-# denominator, rather than quietly acting as a zero.
+# denominator, rather than quietly acting as a zero. "pending" ("not reached
+# yet", a seeded block that was never closed) does the same whichever key holds
+# it, but is reported apart and by file, so an in-flight or abandoned run is told
+# from one whose counters were never knowable.
+#
+# gates_failed is a dimension, not a ratio counter: apart from a pending value (see
+# above) it never keeps a run out.
+# Its normalised list fills the GATES column and feeds the fix-loop tally printed
+# under the table. A legacy gates_failed_first_pass count renders as n=2, so it
+# cannot be read as "gate 2".
 #
 # Usage:
 #   scripts/run-stats.sh [plans-dir ...]      # default: docs/plans
@@ -109,6 +120,27 @@ fi
 IFS= read -r -d '' prog <<'AWK' || true
 function reset() { split("", cur); nkeys = 0 }
 
+# The printable file:line of the block being finished (see the note on finish()).
+function where() { return clean(bfile) ":" bline }
+
+# Normalise a gates_failed value: "none", "pending" and "unknown" pass through; a
+# list of gates 1-5 has its brackets and spaces dropped, its duplicates collapsed
+# and its order fixed ("[4, 2,4]" -> "2,4"). Anything else - a gate outside 1-5,
+# an empty element, "none" mixed into a list - returns "": malformed.
+function gnorm(v,   t, parts, np, j, s, out, g) {
+  if (v == "none" || v == "pending" || v == "unknown") return v
+  t = v
+  gsub(/\[/, "", t); gsub(/\]/, "", t); gsub(/[ \t]/, "", t)
+  np = split(t, parts, ",")
+  for (j = 1; j <= np; j++) {
+    if (parts[j] !~ /^[1-5]$/) return ""
+    s[parts[j]] = 1
+  }
+  out = ""
+  for (g = 1; g <= 5; g++) if (g in s) out = out (out == "" ? "" : ",") g
+  return out
+}
+
 # Heading level of the current line: the number of leading #s after 0-3 spaces,
 # 0 if none. Sets htext to what follows them. No space is required after the #s,
 # so "##Run stats" is a level-2 heading, as it always was. A run of #s is one
@@ -151,17 +183,57 @@ function flush_file() {
 # Reports come from bfile/bline, captured at the heading. An EOF section is
 # finished while the first line of the next file is current, so FILENAME would
 # name the wrong file.
-function finish(   i, k, v, vk, complete) {
+function finish(   i, k, v, vk, complete, haspend, g) {
   if (!started) { reset(); return }
   started = 0
   if (nkeys == 0) {
-    if (hadstatsfence) { malformed++; mlist[malformed] = clean(bfile) ":" bline }
-    else          { unfilled++;  ulist[unfilled]  = clean(bfile) ":" bline }
+    if (hadstatsfence) { malformed++; mlist[malformed] = where() }
+    else          { unfilled++;  ulist[unfilled]  = where() }
     reset(); return
   }
 
   n++
   for (i = 1; i <= na; i++) row[n, ak[i]] = (ak[i] in cur) ? cur[ak[i]] : "?"
+
+  # Classify every key once. "pending" in ANY key means the block was never
+  # closed, and its running totals may be partial, so the run stays out of the
+  # ratios and is listed by file. That is separate from unknown and suspect, which
+  # say a counter cannot be used and are counted for the seven counters only.
+  haspend = 0; complete = 1
+  for (i = 1; i <= na; i++) {
+    v = (ak[i] in cur) ? cur[ak[i]] : ""
+    if (v == "pending") haspend = 1
+    else if (isnum[ak[i]] && v !~ /^[0-9]+$/) {
+      complete = 0
+      if (v == "unknown" || v == "") unkvals++
+      else suspect++
+    }
+  }
+  if (haspend) { complete = 0; pending++; plist[pending] = where() }
+
+  # The GATES cell. gates_failed wins over the legacy count; a malformed value is
+  # shown as written and listed. Only a list or "none" joins the tally (none is a
+  # run with zero loops); unknown, and any pending run, say nothing about where
+  # loops were. A legacy count is shown as n=<value> so it cannot read as a gate
+  # list, and is counted apart as not tallied. The normalised value replaces the
+  # raw one in row[], so the duplicate check below sees "2,4" and "[4, 2]" as one.
+  gd[n] = "?"
+  if ("gates_failed" in cur) {
+    g = gnorm(cur["gates_failed"])
+    gd[n] = (g == "") ? cur["gates_failed"] : g
+    if (g == "") { gbad++; glist[gbad] = where() }
+    else {
+      row[n, "gates_failed"] = g
+      if (g != "unknown" && !haspend) {
+        gruns++
+        for (k = 1; k <= 5; k++) if (index("," g ",", "," k ",")) gtally[k]++
+      }
+    }
+  } else if ("gates_failed_first_pass" in cur) {
+    v = cur["gates_failed_first_pass"]
+    gd[n] = (v == "none" || v == "unknown" || v == "pending") ? v : "n=" v
+    legacy++
+  }
 
   # One rule: a block whose every allowlisted value matches an earlier one is a
   # duplicate, in the same file (a paste) or another (a copied plan). Sharing only
@@ -177,15 +249,6 @@ function finish(   i, k, v, vk, complete) {
   else if (!(k in pairfile)) pairfile[k] = bfile
   else if (pairfile[k] != "" && pairfile[k] != bfile) { pairs++; pairfile[k] = "" }
   seenv[vk] = 1
-
-  complete = 1
-  for (i = 1; i <= nn; i++) {
-    v = (numf[i] in cur) ? cur[numf[i]] : ""
-    if (v ~ /^[0-9]+$/) continue
-    complete = 0
-    if (v == "unknown" || v == "") unkvals++
-    else suspect++
-  }
 
   if (complete) {
     usable++
@@ -214,7 +277,9 @@ function diagnostics() {
   if (dupes)      printf "%d duplicate block(s) (identical values) — check for copied plan files.\n", dupes
   if (pairs)      printf "%d (date, slug) pair(s) appear in more than one file with different values — a stale copy or a name collision.\n", pairs
   listing("stats section(s) never filled in:", ulist, unfilled)
+  listing("run(s) still pending (unfinished or abandoned):", plist, pending)
   listing("malformed block(s) (fence with no recognised key):", mlist, malformed)
+  listing("gates_failed value(s) not none, pending, unknown or a list of gates 1–5:", glist, gbad)
 }
 
 function cell(i, stage) {
@@ -228,8 +293,9 @@ BEGIN {
   na = split("date slug gear effort_plan effort_diff " \
              "findings_plan_actioned findings_plan_rejected findings_plan_dropped " \
              "findings_diff_actioned findings_diff_rejected findings_diff_dropped " \
-             "escaped agents_spawned gates_failed_first_pass escalated_from", ak, " ")
+             "escaped agents_spawned gates_failed gates_failed_first_pass escalated_from", ak, " ")
   for (i = 1; i <= na; i++) allowed[ak[i]] = 1
+  for (i = 1; i <= nn; i++) isnum[numf[i]] = 1
 }
 
 { sub(/\r$/, "") }
@@ -324,15 +390,27 @@ END {
     exit 0
   }
 
-  printf "%-11s %-24s %-5s %-9s %-10s %-10s %4s %6s %5s %-8s\n", \
+  printf "%-11s %-24s %-5s %-9s %-10s %-10s %4s %6s %-9s %-8s\n", \
          "DATE", "SLUG", "GEAR", "EFFORT", "PLAN a/r/d", "DIFF a/r/d", "ESC", "AGENTS", "GATES", "FROM"
   for (i = 1; i <= n; i++)
-    printf "%-11s %-24s %-5s %-9s %-10s %-10s %4s %6s %5s %-8s\n", \
+    printf "%-11s %-24s %-5s %-9s %-10s %-10s %4s %6s %-9s %-8s\n", \
       substr(row[i, "date"], 1, 11), substr(row[i, "slug"], 1, 24), substr(row[i, "gear"], 1, 5), \
       substr(row[i, "effort_plan"] "/" row[i, "effort_diff"], 1, 9), \
       substr(cell(i, "plan"), 1, 10), substr(cell(i, "diff"), 1, 10), \
       substr(row[i, "escaped"], 1, 4), substr(row[i, "agents_spawned"], 1, 6), \
-      substr(row[i, "gates_failed_first_pass"], 1, 5), substr(row[i, "escalated_from"], 1, 8)
+      substr(gd[i], 1, 9), substr(row[i, "escalated_from"], 1, 8)
+
+  # A summary of every parsed row, not a diagnostic, so it sits under the table
+  # and before the ratios: the canonical example must still end on the "dropped"
+  # line. Printed whenever a row carries a parsed gates_failed or a legacy count (so
+  # also when no run is usable). A legacy-only corpus gets zeros plus the "not
+  # tallied" suffix, which says why they are zeros rather than reading as "no loops".
+  if (gruns || legacy) {
+    printf "\nruns with a fix loop, by gate (%d runs with gates_failed): G1 %d · G2 %d · G3 %d · G4 %d · G5 %d", \
+      gruns, gtally[1], gtally[2], gtally[3], gtally[4], gtally[5]
+    if (legacy) printf " — %d legacy rows not tallied", legacy
+    printf "\n"
+  }
 
   if (usable == 0) {
     print "\nNo run had a complete set of counters — no ratios computed."

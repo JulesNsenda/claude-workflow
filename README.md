@@ -296,13 +296,20 @@ person reading the Opus 5 release notes can see they were considered.
 
 ## Measuring the workflow
 
-Every full-gear run ends by writing a short `## Run stats` block into its plan
-file — findings actioned, rejected and dropped at each critic pass, defects that
-escaped both passes, agents spawned, gates that failed first time.
+Every full-gear run seeds a short `## Run stats` block into its plan file when
+the plan is written, then keeps it as a running ledger — each key is filled at
+the checkpoint its *Filled at* column names and the block is closed before the
+change summary. It holds findings actioned, rejected and dropped at each critic
+pass, defects that escaped both passes, agents spawned, and which gates needed
+a fix loop (`gates_failed`, a list such as `2,4`, tallied per gate; the older
+`gates_failed_first_pass` count still parses and shows as `n=2`).
 [`scripts/run-stats.sh`](./scripts/run-stats.sh) aggregates those blocks; the
-format is [`scripts/run-stats.example.md`](./scripts/run-stats.example.md). It
-takes any number of directories, so the corpus can span projects rather than
-being capped at one repo's runs:
+format is [`scripts/run-stats.example.md`](./scripts/run-stats.example.md). A
+key holding `pending` (not reached yet) lists the run as still pending and keeps
+it out of the ratios, whereas `unknown` (not knowable) is written rather than
+guessed. The parser also lists unfilled sections, malformed blocks and
+still-pending runs by `file:line`. It takes any number of directories, so the
+corpus can span projects rather than being capped at one repo's runs:
 
 ```bash
 scripts/run-stats.sh ~/code/*/docs/plans
@@ -579,7 +586,8 @@ a **reference check** ([`ref-check.sh`](./scripts/ref-check.sh)) that fails the
 build when the docs and the agent/skill tree stop agreeing — a renamed or
 deleted agent leaves either a dangling mention or a definition nothing points
 at, and neither used to fail anything — and a **leak guard**: the build fails if
-any blocklisted private string lands in the tree. The blocklist itself lives *outside* the repo (as the
+any blocklisted private string lands in the tree, or if any tracked Markdown
+file is not valid UTF-8. The blocklist itself lives *outside* the repo (as the
 `LEAK_BLOCKLIST` GitHub Actions secret — one regex per line) precisely so the
 repo never has to name the things it must not contain.
 

@@ -45,6 +45,57 @@ jobs:
           fi
           printf '%s\n' "$BLOCKLIST" > "$RUNNER_TEMP/blocklist.txt"
           bash scripts/leak-check.sh "$RUNNER_TEMP/blocklist.txt"
+      - name: Every tracked Markdown file must be valid UTF-8
+        run: |
+          # A Windows tool once wrote cp1252 dashes (0x96/0x97) into the run-stats
+          # format doc on a branch of this repo, and CI stayed green because
+          # nothing parses that prose. The check is a function so the fixtures
+          # below exercise the same code the real tree does.
+          bad_utf8() { # stdin = NUL-delimited paths; one ::error:: line per bad file
+            n=0; rc=0
+            while IFS= read -r -d '' f; do
+              n=$((n + 1))
+              iconv -f UTF-8 -t UTF-8 "$f" >/dev/null 2>&1 \
+                || { echo "::error::$f is not valid UTF-8"; rc=1; }
+            done
+            # An empty list would read as a clean pass; a checker that matches
+            # nothing is worse than none.
+            [ "$n" -gt 0 ] || { echo "::error::no Markdown files to check"; rc=1; }
+            return "$rc"
+          }
+          # NUL-delimited, with quotePath off, so a valid non-ASCII filename is
+          # neither split nor reported as a path git quoted.
+          git -c core.quotePath=off ls-files -z '*.md' | bad_utf8 \
+            || { echo "::error::tracked Markdown failed the UTF-8 check (see above)"; exit 1; }
+          echo "  ok — all tracked Markdown is valid UTF-8"
+
+          # Fixture 1: a 0x97 byte (cp1252 em dash). Assert the message names
+          # the file, not just a non-zero exit.
+          fx="$RUNNER_TEMP/utf8-fixture.md"
+          printf 'a \227 b\n' > "$fx"
+          if out=$(printf '%s\0' "$fx" | bad_utf8 2>&1); then
+            echo "::error::cp1252 fixture: checker reported clean but should have failed"; exit 1
+          fi
+          printf '%s\n' "$out" | grep -qF "::error::$fx is not valid UTF-8" || {
+            echo "::error::cp1252 fixture: expected message not found"; printf '%s\n' "$out"; exit 1
+          }
+          echo "  ok — cp1252 byte rejected, file named"
+
+          # Fixture 2: a valid file with a non-ASCII name must pass cleanly.
+          nx="$RUNNER_TEMP/$(printf 'utf8-na\303\257ve.md')"
+          printf 'caf\303\251 \342\200\224 ok\n' > "$nx"
+          out=$(printf '%s\0' "$nx" | bad_utf8 2>&1) \
+            || { echo "::error::non-ASCII filename fixture: valid file rejected"; printf '%s\n' "$out"; exit 1; }
+          echo "  ok — valid non-ASCII filename passes"
+
+          # Fixture 3: the empty-list guard, exercised against an empty list.
+          if out=$(printf '' | bad_utf8 2>&1); then
+            echo "::error::empty-list fixture: checker reported clean but should have failed"; exit 1
+          fi
+          printf '%s\n' "$out" | grep -qF '::error::no Markdown files to check' || {
+            echo "::error::empty-list fixture: expected message not found"; printf '%s\n' "$out"; exit 1
+          }
+          echo "  ok — empty file list rejected"
 
   shellcheck:
     name: shellcheck
@@ -86,6 +137,18 @@ jobs:
             || { echo "::error::arithmetic changed — expected a denominator of 14"; exit 1; }
           echo "$out" | grep -q 'escaped both passes      7.1%' \
             || { echo "::error::escape rate changed — expected 7.1%"; exit 1; }
+          # The fix-loop tally is computed from the example's own gates_failed, so
+          # a rename of that key, or a parser that stops reading it, goes red. The
+          # tally line sits under the table, before the ratios, so it does not
+          # disturb the last-line check below.
+          gf=$(sed -n 's/^gates_failed: *//p' scripts/run-stats.example.md | tr -d '[] \r')
+          want="runs with a fix loop, by gate (1 runs with gates_failed):"
+          for g in 1 2 3 4 5; do
+            c=0; case ",$gf," in *",$g,"*) c=1 ;; esac
+            want="$want G$g $c"; [ "$g" = 5 ] || want="$want ·"
+          done
+          echo "$out" | grep -qF -- "$want" \
+            || { echo "::error::gate tally changed — expected: $want"; exit 1; }
           # Two checks that do not depend on any message's wording. The example
           # must be warning-free (stderr empty), and nothing may print after the
           # last ratio line: diagnostics() and the listings come after it, so if
@@ -125,6 +188,10 @@ jobs:
             printf 'findings_diff_actioned: 1\nfindings_diff_rejected: 0\nfindings_diff_dropped: 0\n'
             printf 'escaped: 0\nagents_spawned: 3\ngates_failed_first_pass: none\nescalated_from: none\n```\n'
           }
+
+          # A block whose gates line is replaced: $1 = date, $2 = slug, $3 = the
+          # line to write where block() puts the legacy gates_failed_first_pass.
+          gblock() { block "$1" "$2" | sed "s/^gates_failed_first_pass: none\$/$3/"; }
 
           # stdout + stderr, from inside the fixture dir; args default to the dir
           # itself (absolute, so listings read $fx/...). Callers on the exit-1
@@ -422,8 +489,12 @@ jobs:
           printf '# P\n\n## Run stats\n\n_todo_\n' > "$fx/${pre}u.md"             # unfilled
           printf '# P\n\n## Run stats\n\n```yaml\nTBD\n```\n' > "$fx/${pre}m.md"  # malformed
           printf '# P\n\n## Run stats\n\n```yaml\ndate: 2026-01-01\n' > "$fx/${pre}z.md" # unclosed
+          { printf '# P\n\n## Run stats\n\n'; block 2026-01-02 pend-name | sed 's/^escaped: 0$/escaped: pending/'; } > "$fx/${pre}p.md" # pending
+          { printf '# P\n\n## Run stats\n\n'; gblock 2026-01-03 bad-gates 'gates_failed: 9'; } > "$fx/${pre}g.md" # malformed gates_failed
           run
           refute_bytes '\033' 'fixture 30 (ESC from a filename)'
+          expect "  $fx/esc?[31m?p.md:3" 'fixture 30 (pending listing)'
+          expect "  $fx/esc?[31m?g.md:3" 'fixture 30 (malformed gates_failed listing)'
           expect "heading not parsed (expected \"## Run stats\"): $fx/esc?[31m?n.md:3" 'fixture 30 (near-miss warning)'
           expect "  $fx/esc?[31m?u.md:3" 'fixture 30 (unfilled listing)'
           expect "  $fx/esc?[31m?m.md:3" 'fixture 30 (malformed listing)'
@@ -550,6 +621,217 @@ jobs:
           done
           run
           expect '1 (date, slug) pair(s) appear in more than one file' 'fixture 41 (a pair in three files is counted once)'
+
+          # 42 - a block with plan counters known and everything else pending,
+          # including gates_failed (the literal seed is fixture 53). It is
+          # listed as still pending, by file:line, and kept out of the ratios;
+          # pending is not "unknown" and not suspect. The complete run beside
+          # it proves the denominator is untouched.
+          fresh
+          { printf '# P\n\n## Run stats\n\n```yaml\ndate: 2026-09-01\nslug: seeded\ngear: full\neffort_plan: high\n'
+            printf 'effort_diff: pending\nfindings_plan_actioned: 3\nfindings_plan_rejected: 1\nfindings_plan_dropped: 0\n'
+            printf 'findings_diff_actioned: pending\nfindings_diff_rejected: pending\nfindings_diff_dropped: pending\n'
+            printf 'escaped: pending\nagents_spawned: pending\ngates_failed: pending\nescalated_from: none\n```\n'; } > "$fx/p.md"
+          { head_run; block 2026-09-02 finished-run; } > "$fx/q.md"
+          run
+          expect '1 run(s) still pending (unfinished or abandoned):' 'fixture 42 (pending run counted)'
+          expect "  $fx/p.md:3" 'fixture 42 (pending run named by file:line)'
+          refute "$fx/q.md:" 'fixture 42 (finished run is not listed)'
+          one_run 'fixture 42 (pending run is out of the ratios)'
+          expect 'Actioned findings + escapes: 2 ' 'fixture 42 (pending plan counters stay out of the denominator)'
+          refute 'recorded as unknown or missing' 'fixture 42 (pending is not folded into unknown)'
+          refute 'neither an integer' 'fixture 42 (pending is not a suspect value)'
+
+          # 43 - gates_failed is normalised (spaces, brackets, order) and
+          # validated: "2, 4" and "[4,2]" are the list 2,4 and each counts G2 and
+          # G4 once; "2,6" names no gate 6, is reported on its own line, and still
+          # counts as a row (it is not a ratio counter) but not in the tally.
+          fresh
+          { head_run; gblock 2026-09-03 spaced 'gates_failed: 2, 4'
+            printf '\n## Run stats — two\n\n'; gblock 2026-09-04 bracketed 'gates_failed: [4,2]'
+            printf '\n## Run stats — three\n\n'; gblock 2026-09-05 bad-gate 'gates_failed: 2,6'; } > "$fx/g.md"
+          run
+          expect 'runs with a fix loop, by gate (2 runs with gates_failed): G1 0 · G2 2 · G3 0 · G4 2 · G5 0' 'fixture 43 (list normalised, tally counts each gate once per run)'
+          expect '1 gates_failed value(s) not none, pending, unknown or a list of gates 1–5:' 'fixture 43 (malformed value has its own listing)'
+          l3=$(grep -n 'Run stats — three' "$fx/g.md" | cut -d: -f1)
+          expect "  $fx/g.md:$l3" 'fixture 43 (malformed value named by file:line)'
+          expect 'Ratios over 3 complete run(s).' 'fixture 43 (malformed gates_failed does not exclude the run)'
+          refute 'neither an integer' 'fixture 43 (not reported as a suspect counter)'
+
+          # 44 - a legacy block (gates_failed_first_pass, no gates_failed) still
+          # parses and shows the count as n=2, so it cannot read as "gate 2" (a
+          # non-integer legacy value, such as 2x, gets the same n= prefix). Legacy
+          # rows are not tallied, and the tally line says so rather than showing
+          # zeros that read as "no loops".
+          fresh
+          { head_run; gblock 2026-09-06 legacy 'gates_failed_first_pass: 2'
+            printf '\n## Run stats — two\n\n'; gblock 2026-09-06 legacy-odd 'gates_failed_first_pass: 2x'; } > "$fx/l.md"
+          run
+          expect 'Ratios over 2 complete run(s).' 'fixture 44 (legacy blocks parse)'
+          expect ' n=2 ' 'fixture 44 (legacy count rendered n=2)'
+          expect ' n=2x ' 'fixture 44 (non-integer legacy value is prefixed too)'
+          expect '(0 runs with gates_failed): G1 0 · G2 0 · G3 0 · G4 0 · G5 0 — 2 legacy rows not tallied' 'fixture 44 (legacy rows are counted as not tallied)'
+          refute 'gates_failed value' 'fixture 44 (legacy key is not a malformed gates_failed)'
+
+          # 45 - unknown and none are valid gates_failed values and not malformed;
+          # none joins the tally as a run with zero loops, unknown does not. A
+          # gates_failed of pending holds the block open: the run is listed as still
+          # pending, kept out of the ratios, and kept out of the tally.
+          fresh
+          { head_run; gblock 2026-09-07 pend-gates 'gates_failed: pending'
+            printf '\n## Run stats — two\n\n'; gblock 2026-09-08 unk-gates 'gates_failed: unknown'
+            printf '\n## Run stats — three\n\n'; gblock 2026-09-09 no-loops 'gates_failed: none'; } > "$fx/s.md"
+          run
+          refute 'gates_failed value' 'fixture 45 (pending and unknown are not malformed)'
+          expect 'runs with a fix loop, by gate (1 runs with gates_failed): G1 0 · G2 0 · G3 0 · G4 0 · G5 0' 'fixture 45 (only none joins the tally, as zero loops)'
+          expect 'Ratios over 2 complete run(s).' 'fixture 45 (the pending run is out of the ratios)'
+          expect '1 run(s) still pending (unfinished or abandoned):' 'fixture 45 (pending gates_failed holds the run open)'
+          expect "  $fx/s.md:3" 'fixture 45 (pending run named by file:line)'
+
+          # 46, 47 - pending in a key that is not a gating counter still holds the
+          # run open (its running totals may be partial): only escaped, then only
+          # agents_spawned. Every other counter is an integer; the finished sibling
+          # proves the denominator is untouched.
+          for key in escaped agents_spawned; do
+            fresh
+            { head_run; block 2026-09-10 "open-$key" | sed "s/^$key: [0-9]*\$/$key: pending/"; } > "$fx/o.md"
+            { head_run; block 2026-09-11 finished-run; } > "$fx/q.md"
+            run
+            expect '1 run(s) still pending (unfinished or abandoned):' "fixture 46/47 ($key pending lists the run)"
+            expect "  $fx/o.md:3" "fixture 46/47 ($key pending named by file:line)"
+            one_run "fixture 46/47 ($key pending keeps the run out of the ratios)"
+            expect 'Actioned findings + escapes: 2 ' "fixture 46/47 ($key pending leaves the denominator alone)"
+            refute 'recorded as unknown or missing' "fixture 46/47 ($key pending is not unknown)"
+          done
+
+          # 48 - the duplicate check compares the NORMALISED gates_failed, so the
+          # same list spelled "2,4" and "[4, 2]" is one value, in two files.
+          fresh
+          { head_run; gblock 2026-09-12 same-plan 'gates_failed: 2,4'; } > "$fx/a.md"
+          { head_run; gblock 2026-09-12 same-plan 'gates_failed: [4, 2]'; } > "$fx/b.md"
+          run
+          expect '1 duplicate block(s) (identical values)' 'fixture 48 (equal gate lists spelled differently are a duplicate)'
+
+          # 49 - with both keys present, gates_failed is the cell and the legacy
+          # count is neither shown nor counted.
+          fresh
+          { head_run; gblock 2026-09-13 both-keys 'gates_failed: 2,4\ngates_failed_first_pass: 3'; } > "$fx/b.md"
+          run
+          expect ' 2,4 ' 'fixture 49 (the list is shown)'
+          refute 'n=' 'fixture 49 (the legacy count is not shown)'
+          refute 'legacy row' 'fixture 49 (the legacy count is not counted)'
+
+          # 50 - a pending run with a valid gates_failed list is out of the tally
+          # too: its loops are a running total, not a result. The finished sibling
+          # (none) is the only tallied run.
+          fresh
+          { head_run; gblock 2026-09-14 open-run 'gates_failed: 2,4' | sed 's/^escaped: 0$/escaped: pending/'; } > "$fx/o.md"
+          { head_run; gblock 2026-09-15 closed-run 'gates_failed: none'; } > "$fx/q.md"
+          run
+          expect 'runs with a fix loop, by gate (1 runs with gates_failed): G1 0 · G2 0 · G3 0 · G4 0 · G5 0' 'fixture 50 (pending run is not tallied)'
+
+          # 51 - a legacy gates_failed_first_pass of none, unknown or pending is
+          # shown as the word, never as n=none: only a count gets the n= prefix.
+          # (The default block carries none; the others are rewritten.) The GATES
+          # cell is the 9-wide column, so the word is followed by a space.
+          fresh
+          { head_run; block 2026-09-16 legacy-none
+            printf '\n## Run stats — two\n\n'; gblock 2026-09-17 legacy-unknown 'gates_failed_first_pass: unknown'
+            printf '\n## Run stats — three\n\n'; gblock 2026-09-18 legacy-pending 'gates_failed_first_pass: pending'; } > "$fx/w.md"
+          run
+          expect ' none      none ' 'fixture 51 (legacy none is shown as none)'
+          expect ' unknown   none ' 'fixture 51 (legacy unknown is shown as unknown)'
+          expect ' pending   none ' 'fixture 51 (legacy pending is shown as pending)'
+          refute 'n=none' 'fixture 51 (legacy none is not prefixed)'
+          refute 'n=unknown' 'fixture 51 (legacy unknown is not prefixed)'
+          refute 'n=pending' 'fixture 51 (legacy pending is not prefixed)'
+
+          # 52 - a malformed gates_failed is shown in the GATES cell exactly as
+          # written (so the reader sees what to fix) and is listed. Gate 0 is not
+          # a gate: the valid range is 1-5, both ends.
+          fresh
+          { head_run; gblock 2026-09-19 zero-gate 'gates_failed: 0'
+            printf '\n## Run stats — two\n\n'; gblock 2026-09-20 junk-gate 'gates_failed: 2;x'; } > "$fx/z.md"
+          run
+          expect '2 gates_failed value(s) not none, pending, unknown or a list of gates 1–5:' 'fixture 52 (gate 0 and 2;x are both malformed)'
+          expect ' 0         none ' 'fixture 52 (gate 0 shown as written)'
+          expect ' 2;x       none ' 'fixture 52 (malformed value shown as written)'
+          refute 'runs with a fix loop' 'fixture 52 (malformed rows are not tallied, so no tally line)'
+
+          # 53, 54 - the lifecycle, literally: a block seeded from the Filled at
+          # table (plan counters known, effort_diff / findings_diff_* / escaped
+          # pending, gates_failed none, agents_spawned an integer) is listed as
+          # still pending by file:line; the same block closed (every pending
+          # resolved, gates_failed 2,4) is a clean complete run with the tally,
+          # and nothing is listed as pending or complained about.
+          seed_block() {
+            printf '```yaml\ndate: 2026-09-20\nslug: lifecycle\ngear: full\neffort_plan: high\n'
+            printf 'effort_diff: pending\nfindings_plan_actioned: 3\nfindings_plan_rejected: 1\nfindings_plan_dropped: 0\n'
+            printf 'findings_diff_actioned: pending\nfindings_diff_rejected: pending\nfindings_diff_dropped: pending\n'
+            printf 'escaped: pending\nagents_spawned: 5\ngates_failed: none\nescalated_from: none\n```\n'
+          }
+          # The same block with every pending resolved and gates_failed 2,4.
+          closed_block() {
+            printf '```yaml\ndate: 2026-09-20\nslug: lifecycle\ngear: full\neffort_plan: high\n'
+            printf 'effort_diff: high\nfindings_plan_actioned: 3\nfindings_plan_rejected: 1\nfindings_plan_dropped: 0\n'
+            printf 'findings_diff_actioned: 2\nfindings_diff_rejected: 1\nfindings_diff_dropped: 0\n'
+            printf 'escaped: 0\nagents_spawned: 9\ngates_failed: 2,4\nescalated_from: none\n```\n'
+          }
+          fresh
+          { head_run; seed_block; } > "$fx/p.md"
+          run
+          expect '1 run(s) still pending (unfinished or abandoned):' 'fixture 53 (seeded block is pending)'
+          expect "  $fx/p.md:3" 'fixture 53 (seeded block named by file:line)'
+          refute 'Ratios over' 'fixture 53 (seeded block is out of the ratios)'
+          refute 'gates_failed value' 'fixture 53 (gates_failed none is not malformed)'
+          refute 'recorded as unknown or missing' 'fixture 53 (pending is not folded into unknown)'
+          fresh
+          { head_run; closed_block; } > "$fx/p.md"
+          run
+          one_run 'fixture 54 (closed block is a complete run)'
+          expect 'runs with a fix loop, by gate (1 runs with gates_failed): G1 0 · G2 1 · G3 0 · G4 1 · G5 0' 'fixture 54 (closed block is tallied)'
+          refute 'still pending' 'fixture 54 (nothing left pending)'
+          refute 'gates_failed value' 'fixture 54 (the list parses)'
+          refute 'malformed' 'fixture 54 (no complaint)'
+          refute 'neither an integer' 'fixture 54 (no suspect counter)'
+
+          # 55 - the close check plan-gates step 11 tells the orchestrator to run:
+          # copy the plan into an empty directory, run the parser, and require the
+          # ratio line, nothing after the "dropped" line, and an empty stderr. A
+          # mistyped key (escapd) emits only a count diagnostic that names no
+          # file, so a check keyed on the file name would pass it.
+          close_ok() { # $1 = plan file; returns 0 only if the close criteria hold
+            cd_dir="$RUNNER_TEMP/close-check"; rm -rf "$cd_dir"; mkdir -p "$cd_dir"
+            cp "$1" "$cd_dir/"
+            cout=$(bash "$rs" "$cd_dir" 2>"$RUNNER_TEMP/close-check.err")
+            [ -z "$(cat "$RUNNER_TEMP/close-check.err")" ] || return 1
+            printf '%s\n' "$cout" | grep -qF 'Ratios over 1 complete run(s).' || return 1
+            clast=$(printf '%s\n' "$cout" | grep -v '^$' | tail -1)
+            case $clast in *'dropped without individual reasons'*) return 0 ;; *) return 1 ;; esac
+          }
+          fresh
+          { head_run; closed_block; } > "$fx/good.md"
+          { head_run; closed_block | sed 's/^escaped:/escapd:/'; } > "$fx/typo.md"
+          if close_ok "$fx/good.md"; then echo "  ok - fixture 55 (a clean closed block passes the close check)"
+          else red "fixture 55: a clean closed block failed the close check"; fi
+          if close_ok "$fx/typo.md"; then red "fixture 55: a mistyped key passed the close check"
+          else echo "  ok - fixture 55 (a mistyped key fails the close check)"; fi
+          # A malformed gates_failed still yields the ratio line (it is a
+          # dimension, not a counter); only the trailing listing catches it.
+          { head_run; closed_block | sed 's/^gates_failed: .*/gates_failed: 2;x/'; } > "$fx/gate.md"
+          if close_ok "$fx/gate.md"; then red "fixture 55: a malformed gates_failed passed the close check"
+          else echo "  ok - fixture 55 (a malformed gates_failed fails the close check)"; fi
+          # Two criteria that no output line can catch for these inputs: a plan
+          # holding two complete runs prints "Ratios over 2" and still ends on the
+          # dropped line (only the ratio-line criterion fails it); a near-miss
+          # heading after a good block warns on stderr only (only the empty-stderr
+          # criterion fails it).
+          { head_run; closed_block; printf '\n## Run stats — again\n\n'; closed_block | sed 's/^slug: lifecycle$/slug: second/'; } > "$fx/two.md"
+          if close_ok "$fx/two.md"; then red "fixture 55: two runs passed the one-run close check"
+          else echo "  ok - fixture 55 (a second run fails the close check)"; fi
+          { head_run; closed_block; printf '\n## run stats\n'; } > "$fx/warn.md"
+          if close_ok "$fx/warn.md"; then red "fixture 55: a stderr warning passed the close check"
+          else echo "  ok - fixture 55 (a stderr warning fails the close check)"; fi
 
           exit "$fail"
 

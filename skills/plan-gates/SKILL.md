@@ -76,9 +76,14 @@ reasoning transcripts**.
    addresses or consciously rejects it — and, appended at Gate 2,
    **Agent critiques considered — diff stage**: same format, separate corpus,
    sub-headed per plan-item and pass (`### <item> · pass N`) so the two stages
-   and the fix-loop iterations stay countable apart. Finally **Summary** and
-   **Run stats**, both filled in at the end of Phase 2. Those sections, sized to the task — cover
-   the substance, nothing beyond it, no filler or restatement. That is a
+   and the fix-loop iterations stay countable apart. Finally **Summary**,
+   written at the end of Phase 2, and **Run stats**, seeded now as a running
+   ledger: each later checkpoint updates the keys whose *Filled at* names it,
+   never end-of-run recall. The format and seed rules live in the
+   **claude-workflow** clone, not the current project (`scripts/` is not
+   symlinked into `~/.claude`): read `scripts/run-stats.example.md` there
+   rather than reconstructing the keys from memory. Those sections, sized to the task — cover the substance,
+   nothing beyond it, no filler or restatement. That is a
    brevity rule for prose, **not** for the per-finding rejection reasons step 4
    requires: never drop one of those to save space.
 6. **Stop for approval.** No production code until the user says "looks
@@ -88,6 +93,10 @@ reasoning transcripts**.
 
 Models switch automatically per phase: the main session stays frontier
 (orchestrator/verifier); implementation and testing run on spawned agents.
+Resuming in a new session? Read the plan's Run stats block first. Keys still
+`pending` stay `pending`; only a key whose checkpoint has already passed
+without being written becomes `unknown`, never `0`, and a running total that
+has become `unknown` stays `unknown`.
 
 1. **Optionally drive with `/goal`** (built-in, v2.1.139+; the user types it —
    hand them the line to paste). Its evaluator is a fast model that doesn't
@@ -118,7 +127,7 @@ Models switch automatically per phase: the main session stays frontier
    considered — diff stage**. Each critic's `model:` line is self-reported, not
    attestation: cross-check it against that agent's frontmatter pin, and if a
    review came back on a fallback model, re-run `/model` and re-run the critic
-   before the gate can pass.
+   before the gate can pass. Update the ledger.
 5. **Gate 3 · Dedicated test pass — always.** Hand off to the `test-runner`
    subagent (or the `/test` skill): run the full suite, cover every
    change-surface item, regression test per bug fixed, report the change's
@@ -160,17 +169,24 @@ Models switch automatically per phase: the main session stays frontier
    called out — a rename or a collapsed conditional doesn't need the panel
    again. Judge it, and record which you re-ran.
 9. **Fix loop.** Any gate failure: re-plan the fix (frontier), re-implement
-   (mid tier), re-run the affected gates. Repeat until clean.
+   (mid tier), re-run the affected gates. Repeat until clean. Update the ledger,
+   and if a Gate 3/4 failure is a defect both critic passes missed, note it in
+   the plan.
 10. **Commit per plan-item** as it clears all five gates — tick its checkbox in
-   the same commit. Don't batch the whole plan into one commit; per-item
-   commits bound derailment and make reverts cheap.
-11. **Write the change summary** after the last plan-item commit. First bring
-   the plan file up to date if scope legitimately changed, so the summary is
-   written from the final record. Then add it to the plan file as
-   `## Summary`. Its reader is someone who was not in the session and has not
-   read the plan — a reviewer, a teammate picking the work up, you in three
-   months. The plan file usually stays local, so the same text is also what
-   goes out: reuse it as the PR description, or as the closing message when
+   the same commit, and update the ledger. Don't batch the whole plan into one
+   commit; per-item commits bound derailment and make reverts cheap.
+11. **Write the change summary** after the last plan-item commit. First close
+   the ledger, resolving every `pending` to a real value or `unknown`. Then
+   check it as CI checks the canonical example: copy the plan file into an
+   empty temp directory and run the claude-workflow clone's
+   `scripts/run-stats.sh` on that directory. The close is done only when the
+   output says `Ratios over 1 complete run(s).`, nothing follows the
+   `dropped without individual reasons` line, and stderr is empty. Then bring
+   the plan file up to date if scope legitimately changed, so the summary is written
+   from the final record. Then add it to the plan file as `## Summary`. Its
+   reader is someone who was not in the session and has not read the plan — a
+   reviewer, a teammate picking the work up, you in three months. The plan file
+   usually stays local, so the same text is also what goes out: reuse it as the PR description, or as the closing message when
    there is no PR, so the two can't drift. Keep it short and in plain
    language:
    - **What changed and why** — one line per plan-item, named by its commit
@@ -179,6 +195,10 @@ Models switch automatically per phase: the main session stays frontier
      can repeat it.
    - **What was deliberately not done** — scope that was cut.
    - **Risks and follow-ups** — anything known to be open.
+   - **Run stats** — one line composed from `gates_failed`, `escaped` and
+     `agents_spawned` only, never `slug`, `date` or other keys, e.g.
+     `Run stats: gates looped 2,4 · escaped 0 · agents 14`. It is outward text
+     like the rest of the summary, so the scrub below still applies.
 
    **Scrub it before it leaves the machine.** Rejected critic findings stay in
    **Agent critiques considered**, which is local on purpose — a rejected
@@ -188,17 +208,16 @@ Models switch automatically per phase: the main session stays frontier
    and the run stats rather than restating them; a summary that retells the
    diff is one nobody reads. Same bar as Gate 5: a competent junior should
    understand the change from it without the plan file open.
-12. **Fill in `## Run stats`.** If the plan file is tracked, commit it together
+12. **Commit the record.** If the plan file is tracked, commit it together
    with the summary as one `chore(plan): record summary and run stats` commit;
-   if `docs/` is ignored there is nothing to commit. The format and key list live in
-   `scripts/run-stats.example.md` in the claude-workflow repo — read that file
-   rather than reconstructing the keys from memory (the installer symlinks
-   `skills/` and `agents/` but not `scripts/`, so open it from the clone).
+   if `docs/` is ignored there is nothing to commit. Format and key list: see
+   **Write the plan file** in Phase 1.
    **Record what happened, not what should have happened.** A run where the
    critics found nothing and a defect escaped anyway is the most valuable row
    in the set — never round it toward looking good, and write `unknown` for
    anything you don't actually know rather than guessing. `unknown` drops the
-   run from the ratios rather than counting as zero, so honesty costs nothing.
+   run from the ratios rather than counting as zero, so honesty costs nothing;
+   a `pending` must not survive the close.
 13. **Capture what you learned.** Write durable decisions and gotchas to
     memory. Keep an entry to three things — the decision,
     the why, and the trap it avoids; the README covers the shape. What has
