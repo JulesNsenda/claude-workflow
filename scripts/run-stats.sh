@@ -21,8 +21,9 @@
 #   stdout  "never filled in" (a heading with no fence), "malformed" (a fence
 #           with no recognised key), "still pending" (a run with `pending` in
 #           any key), a gates_failed value that is not a list of gates,
-#           duplicate blocks (identical values), and (date, slug) pairs shared
-#           across files with different values.
+#           duplicate blocks (identical values), (date, slug) pairs shared
+#           across files with different values, a gear that is not full or
+#           light, and an escaped_late value that is not counted (below).
 #   stderr  a near-miss heading that was not parsed; an unclosed fence (its
 #           partial block is discarded, never counted); a second block under
 #           one heading (not parsed).
@@ -49,6 +50,18 @@
 # it, but is reported apart and by file, so an in-flight or abandoned run is told
 # from one whose counters were never knowable. A light run writes no plan-stage
 # keys, so only its three diff counters and escaped must be integers.
+#
+# escaped_late counts defects found after a run closed, traced back to it (see
+# "Late escapes" in the example). It is not a ratio counter and not in the row
+# keys: never seeded, so an absent key reads as 0, and exempt from the pending scan
+# (a stray "pending" there must not hold a finished run open). The late line, right
+# under the light line (or under "escaped both passes"), covers the complete full
+# runs whose escaped_late is an integer or absent, accumulated apart from the
+# headline (lreal, lesc0, lsum): (escaped + late) / (real + late), with the run
+# count. It prints only when lsum is above 0. Any other value - "unknown",
+# "pending", prose - is listed by file:line as "not counted", and so is any
+# escaped_late on a light, incomplete or bad-gear run: those runs leave the late
+# population. In the duplicate check an absent key counts as 0.
 #
 # gates_failed is a dimension, not a ratio counter: apart from a pending value (see
 # above) it never keeps a run out.
@@ -199,7 +212,7 @@ function flush_file() {
 # Reports come from bfile/bline, captured at the heading. An EOF section is
 # finished while the first line of the next file is current, so FILENAME would
 # name the wrong file.
-function finish(   i, k, v, vk, complete, haspend, g, gclass) {
+function finish(   i, k, v, vk, complete, haspend, g, gclass, lv, lok, hasl) {
   if (!started) { reset(); return }
   started = 0
   if (nkeys == 0) {
@@ -224,6 +237,11 @@ function finish(   i, k, v, vk, complete, haspend, g, gclass) {
   for (i = 1; i <= na; i++) if ((ak[i] in cur) && cur[ak[i]] == "pending") haspend = 1
   if (haspend) { pending++; plist[pending] = where() }
   complete = (gclass != "bad" && !haspend)
+  # escaped_late sits outside ak[] on purpose: that keeps it out of the pending
+  # scan above, out of the row, and out of the duplicate key until normalised below.
+  hasl = ("escaped_late" in cur)
+  lv = hasl ? cur["escaped_late"] : "0"
+  lok = (lv ~ /^[0-9]+$/)
   if (gclass != "bad") {
     for (i = 1; i <= na; i++) {
       v = (ak[i] in cur) ? cur[ak[i]] : ""
@@ -238,6 +256,9 @@ function finish(   i, k, v, vk, complete, haspend, g, gclass) {
     nfull++
     if (cur["escalated_from"] == "light") kesc++
   }
+  # Listed whenever the value cannot join the late line: not an integer, or on a run
+  # that is not a complete full one.
+  if (hasl && (!lok || gclass != "full" || !complete)) { lbad++; lblist[lbad] = where() }
 
   # The GATES cell. gates_failed wins over the legacy count; a malformed value is
   # shown as written and listed. Only a list or "none" joins the tally (none is a
@@ -252,7 +273,7 @@ function finish(   i, k, v, vk, complete, haspend, g, gclass) {
     if (g == "") { gbad++; glist[gbad] = where() }
     else {
       row[n, "gates_failed"] = g
-      if (g != "unknown" && !haspend) {
+      if (g != "unknown" && !haspend && gclass != "bad") {
         gruns++
         for (k = 1; k <= 5; k++) if (index("," g ",", "," k ",")) gtally[k]++
       }
@@ -268,6 +289,7 @@ function finish(   i, k, v, vk, complete, haspend, g, gclass) {
   # a date and slug is not: unrelated plans can share a name across projects.
   vk = ""
   for (i = 1; i <= na; i++) vk = vk SUBSEP row[n, ak[i]]
+  vk = vk SUBSEP lv
   # Otherwise, worth saying: the same (date, slug) in more than one file with
   # different values is a stale copy or a name collision. Cross-file only (in one
   # file it is a legitimate run per heading), counted once per pair: pairfile
@@ -284,6 +306,10 @@ function finish(   i, k, v, vk, complete, haspend, g, gclass) {
   } else if (complete) {
     usable++
     for (i = 1; i <= nn; i++) sum[numf[i]] += cur[numf[i]]
+    if (lok) {
+      lruns++; lsum += lv; lesc0 += cur["escaped"]
+      lreal += cur["findings_plan_actioned"] + cur["findings_diff_actioned"] + cur["escaped"]
+    }
   } else if (gclass != "bad") {
     incomplete++
   }
@@ -299,6 +325,14 @@ function lightline(   d) {
   d = ldiff + lesc
   printf "light gear: escaped review %s (%d runs; %d full runs escalated from light)\n", \
     (d > 0) ? sprintf("%.1f%%", 100 * lesc / d) : "n/a", lusable, kesc + 0
+}
+
+# Directly after the light line. Silent at a late sum of 0, so a corpus with no
+# late escapes prints exactly what it did before the key existed.
+function lateline() {
+  if (lsum <= 0) return
+  printf "escaped incl. found after merge  %s  (%d/%d, %d runs)\n", \
+    pct(lesc0 + lsum, lreal + lsum), lesc0 + lsum, lreal + lsum, lruns
 }
 
 # title is the text after the count; each entry prints as an indented file:line.
@@ -320,6 +354,7 @@ function diagnostics() {
   listing("run(s) still pending (unfinished or abandoned):", plist, pending)
   listing("malformed block(s) (fence with no recognised key):", mlist, malformed)
   listing("gates_failed value(s) not none, pending, unknown or a list of gates 1–5:", glist, gbad)
+  listing("escaped_late value(s) not counted:", lblist, lbad)
   listing("gear value(s) not full or light (run left out of the ratios):", gblist, gearbad)
 }
 
@@ -336,6 +371,7 @@ BEGIN {
              "findings_diff_actioned findings_diff_rejected findings_diff_dropped " \
              "escaped agents_spawned gates_failed gates_failed_first_pass escalated_from", ak, " ")
   for (i = 1; i <= na; i++) allowed[ak[i]] = 1
+  allowed["escaped_late"] = 1
   for (i = 1; i <= nn; i++) isnum[numf[i]] = 1
   nl = split("findings_diff_actioned findings_diff_rejected findings_diff_dropped escaped", lk, " ")
   for (i = 1; i <= nl; i++) lightnum[lk[i]] = 1
@@ -475,6 +511,7 @@ END {
   printf "  caught at diff stage   %s  (%d/%d)\n", pct(sum["findings_diff_actioned"], real), sum["findings_diff_actioned"], real
   printf "  escaped both passes    %s  (%d/%d)   <- the number that matters\n", pct(sum["escaped"], real), sum["escaped"], real
   lightline()
+  lateline()
   printf "Critic findings raised: %d\n", found
   printf "  critic rejection rate  %s  (%d/%d)\n", pct(rej, found), rej, found
   printf "  %d dropped without individual reasons — excluded from the defect count by assumption\n", drop

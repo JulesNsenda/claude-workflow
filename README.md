@@ -304,7 +304,11 @@ pass, defects that escaped both passes, agents spawned, and which gates needed
 a fix loop (`gates_failed`, a list such as `2,4`, tallied per gate; the older
 `gates_failed_first_pass` count still parses and shows as `n=2`).
 Light-gear runs write a shorter block, to `docs/plans/light-runs.md`, that the
-parser reports on its own line, apart from the full-gear ratios.
+parser reports on its own line, apart from the full-gear ratios. A bug found
+after a full-gear run closed can be recorded against it as `escaped_late` (the
+user confirms first; the procedure is under *Late escapes* in the format doc;
+light runs are not eligible), and the parser then adds a line for the escape
+rate that includes those.
 [`scripts/run-stats.sh`](./scripts/run-stats.sh) aggregates those blocks; the
 format is [`scripts/run-stats.example.md`](./scripts/run-stats.example.md). A
 key holding `pending` (not reached yet) lists the run as still pending and keeps

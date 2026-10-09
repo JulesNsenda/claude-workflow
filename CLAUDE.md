@@ -39,8 +39,8 @@ gets silently bypassed, which is worse than a lighter one that gets used:
   check. Close by appending a light Run stats block to `docs/plans/light-runs.md`
   (only if `docs/plans/light-runs.md` is gitignored; otherwise ask once per
   project) — format: `scripts/run-stats.example.md` in the **claude-workflow**
-  clone, i.e. the target of the `~/.claude/skills/plan-gates` link, not the
-  current project.
+  clone that the `~/.claude/skills/plan-gates` link points into (not the
+  current project).
 - **Full.** New features, multi-file refactors, schema/API changes, anything
   security-sensitive or approach-uncertain → **invoke the `plan-gates`
   skill** and follow it end to end.
@@ -68,6 +68,9 @@ gears exist.
   review, not double-checking, and always runs.
 - If implementation deviates from the plan, surface it — don't improvise.
 - Commit per plan-item, not one batch commit per plan.
+- A fix you already traced (`git blame` or `git log`) to a commit named in a
+  closed full-gear plan: offer to record a late escape — *Late escapes* in the
+  format file named in the Light clause; if the link doesn't resolve, skip.
 - When a task ends, write durable decisions and gotchas to memory.
 
 ## Model routing (automatic — the user never runs /model)

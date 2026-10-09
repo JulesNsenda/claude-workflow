@@ -20,13 +20,23 @@ and a clone reads the tag.
 
 - **Light-gear run record.** A light run closes by appending a short `## Run
   stats` block to `docs/plans/light-runs.md` (only if that file is gitignored,
-  otherwise it asks once per project), with a `Commit:` line under it. `run-stats.sh` reports
+  otherwise it asks once per project). `run-stats.sh` reports
   them on their own `light gear: escaped review` line, with a count of full runs
   escalated from light; `gear` now accepts `full` or `light` and lists anything
   else by file:line.
+- **Late escapes.** A fix traced to a commit named in a closed, gitignored
+  full-gear plan can be recorded against that run as `escaped_late`, after the
+  user confirms, and `run-stats.sh` adds an `escaped incl. found after merge`
+  line when the sum is above 0. The procedure is under *Late escapes* in
+  `scripts/run-stats.example.md`. Pull the clone, or the new key reads as an
+  unparsable line.
 
 ### Changed
 
+- **Light records no longer carry a `Commit:` line.** Light runs are not
+  eligible for late escapes.
+- **The fix-loop tally skips runs with a bad `gear`.** They have no partition
+  to be scored in, so they no longer feed the per-gate counts.
 - **The `run-stats.sh` headline is computed over full-gear runs only.** Output
   is byte-identical on an all-full corpus. With no full run it prints `No
   full-gear run — headline ratios omitted.` and omits the rejection and
