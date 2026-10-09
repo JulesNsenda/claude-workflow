@@ -16,6 +16,11 @@ and a clone reads the tag.
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-10-09
+
+Minor: a light-gear stats record and the `escaped_late` key with its procedure;
+one new hard rule pointing at that procedure. Nothing removed or renamed. ([#21])
+
 ### Added
 
 - **Light-gear run record.** A light run closes by appending a short `## Run
@@ -341,7 +346,8 @@ earlier release to upgrade from.
 
 Landed as pull requests [#1], [#2], [#3], and [#4].
 
-[Unreleased]: https://github.com/JulesNsenda/claude-workflow/compare/v1.5.0...HEAD
+[Unreleased]: https://github.com/JulesNsenda/claude-workflow/compare/v1.6.0...HEAD
+[1.6.0]: https://github.com/JulesNsenda/claude-workflow/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/JulesNsenda/claude-workflow/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/JulesNsenda/claude-workflow/compare/v1.3.1...v1.4.0
 [1.3.1]: https://github.com/JulesNsenda/claude-workflow/compare/v1.3.0...v1.3.1
@@ -362,3 +368,4 @@ Landed as pull requests [#1], [#2], [#3], and [#4].
 [#15]: https://github.com/JulesNsenda/claude-workflow/pull/15
 [#17]: https://github.com/JulesNsenda/claude-workflow/pull/17
 [#19]: https://github.com/JulesNsenda/claude-workflow/pull/19
+[#21]: https://github.com/JulesNsenda/claude-workflow/pull/21
