@@ -16,6 +16,20 @@ and a clone reads the tag.
 
 ## [Unreleased]
 
+### Changed
+
+- **`plan-gates` prefers project-aware critics.** If a project-specific review
+  agent is available it becomes a task-fit critic at the plan and the diff
+  review (as-is only if read-only and severity-tagged); convention sources are
+  named by path in every critic's brief, since subagents can't invoke skills.
+  Rejection ran highest where critics didn't know the house conventions
+  (observed, uncontrolled).
+- **`plan-gates` sizes the plan.** A plan-item is defined as one independently
+  committable unit. More than one independent concern means proposing a split
+  (or a separate light-gear change); a third fix loop on one item, or agents
+  spent at about twice the plan's own budget, stops the run to offer a re-plan
+  or a split. Large runs are where review stops converging.
+
 ## [1.4.0] - 2026-10-09
 
 Minor: a new run-stats sentinel and key, and a changed `plan-gates` procedure
